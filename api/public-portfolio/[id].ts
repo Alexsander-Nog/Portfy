@@ -74,6 +74,20 @@ type ExperienceRow = {
   translations: JsonRecord;
 };
 
+type ArticleRow = {
+  id: string;
+  title: string;
+  publication: string | null;
+  publication_date: string | null;
+  summary: string | null;
+  link: string | null;
+  doi: string | null;
+  authors: string[] | null;
+  show_in_portfolio: boolean | null;
+  show_in_cv: boolean | null;
+  position: number | null;
+};
+
 type VideoRow = {
   id: string;
   url: string;
@@ -90,6 +104,7 @@ type CvRow = {
   language: 'pt' | 'en' | 'es';
   selected_projects: string[] | null;
   selected_experiences: string[] | null;
+  selected_articles: string[] | null;
   created_at: string;
   updated_at: string;
 };
@@ -135,7 +150,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
-    const [themeResult, videosResult, projectsResult, experiencesResult, cvsResult] = await Promise.all([
+    const [themeResult, videosResult, projectsResult, experiencesResult, articlesResult, cvsResult] = await Promise.all([
       supabase
         .from<ThemeRow>('user_themes')
         .select('primary_color, secondary_color, accent_color, background_color, font_family, theme_mode, layout')
@@ -161,8 +176,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .eq('user_id', userId)
         .order('created_at', { ascending: false }),
       supabase
+        .from<ArticleRow>('articles')
+        .select(
+          'id, title, publication, publication_date, summary, link, doi, authors, show_in_portfolio, show_in_cv, position'
+        )
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false }),
+      supabase
         .from<CvRow>('cvs')
-        .select('id, name, language, selected_projects, selected_experiences, created_at, updated_at')
+        .select('id, name, language, selected_projects, selected_experiences, selected_articles, created_at, updated_at')
         .eq('user_id', userId)
         .order('updated_at', { ascending: false }),
     ]);
@@ -171,6 +193,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (videosResult.error) throw videosResult.error;
     if (projectsResult.error) throw projectsResult.error;
     if (experiencesResult.error) throw experiencesResult.error;
+    if (articlesResult.error) throw articlesResult.error;
     if (cvsResult.error) throw cvsResult.error;
 
     const formattedProfile = {
@@ -249,6 +272,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }))
       : [];
 
+    const formattedArticles = Array.isArray(articlesResult.data)
+      ? articlesResult.data.map((article) => ({
+          id: article.id,
+          title: article.title,
+          publication: article.publication ?? undefined,
+          publicationDate: article.publication_date ?? undefined,
+          summary: article.summary ?? undefined,
+          link: article.link ?? undefined,
+          doi: article.doi ?? undefined,
+          authors: article.authors ?? undefined,
+          showInPortfolio: article.show_in_portfolio ?? undefined,
+          showInCv: article.show_in_cv ?? undefined,
+          position: article.position ?? undefined,
+        }))
+      : [];
+
     const formattedCvs = Array.isArray(cvsResult.data)
       ? cvsResult.data.map((cv) => ({
           id: cv.id,
@@ -256,6 +295,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           language: cv.language,
           selectedProjects: cv.selected_projects ?? [],
           selectedExperiences: cv.selected_experiences ?? [],
+          selectedArticles: cv.selected_articles ?? [],
           createdAt: cv.created_at,
           updatedAt: cv.updated_at,
         }))
@@ -267,6 +307,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       featuredVideos: formattedVideos,
       projects: formattedProjects,
       experiences: formattedExperiences,
+      articles: formattedArticles,
       cvs: formattedCvs,
     });
   } catch (error) {

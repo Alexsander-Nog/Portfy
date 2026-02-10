@@ -6,17 +6,32 @@ import { CVCreator } from './CVCreator';
 import { Appearance } from './Appearance';
 import { Subscription } from './Subscription';
 import {
+  createArticle,
   createExperience,
   createProject,
+  deleteArticle,
   deleteExperience,
   deleteProject,
+  updateArticle,
   updateExperience,
   updateProject,
   uploadPortfolioAsset,
   upsertUserProfile,
 } from '../data/portfolio';
 import { isSupabaseConfigured, supabase } from '../../lib/supabaseClient';
-import type { CV, Experience, FeaturedVideo, Locale, Project, Subscription as SubscriptionType, SubscriptionPlan, UserProfile, UserTheme } from '../types';
+import type {
+  CV,
+  Experience,
+  FeaturedVideo,
+  Locale,
+  Project,
+  ScientificArticle,
+  ScientificArticleTranslations,
+  Subscription as SubscriptionType,
+  SubscriptionPlan,
+  UserProfile,
+  UserTheme,
+} from '../types';
 import { useLocale } from '../i18n';
 import { 
   Eye, 
@@ -41,7 +56,8 @@ import {
   GripVertical,
   X,
   Check,
-  Palette
+  Palette,
+  BookOpen,
 } from 'lucide-react';
 import { PLAN_LIMITS, resolvePlanName } from '../data/plans';
 
@@ -56,6 +72,8 @@ interface DashboardProps {
   onProjectsChange: (projects: Project[]) => void;
   experiences: Experience[];
   onExperiencesChange: (experiences: Experience[]) => void;
+  articles: ScientificArticle[];
+  onArticlesChange: (articles: ScientificArticle[]) => void;
   cvs: CV[];
   onCvsChange: (cvs: CV[]) => void;
   userId?: string;
@@ -80,6 +98,8 @@ export function Dashboard(props: DashboardProps) {
     onProjectsChange,
     experiences,
     onExperiencesChange,
+    articles,
+    onArticlesChange,
     userId,
     userProfile,
     onProfileChange,
@@ -90,16 +110,19 @@ export function Dashboard(props: DashboardProps) {
     accountCreatedAt,
     onLocalePersist,
   } = props;
-  const planTier = (subscription?.planTier ?? 'basic') as SubscriptionPlan;
+  const planTier = (subscription?.planTier ?? 'pro') as SubscriptionPlan;
   const planLimits = PLAN_LIMITS[planTier];
   const planName = resolvePlanName(planTier);
   const [activeSection, setActiveSection] = useState('dashboard');
   const [showAddProject, setShowAddProject] = useState(false);
   const [showAddExperience, setShowAddExperience] = useState(false);
+  const [showAddArticle, setShowAddArticle] = useState(false);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [experienceError, setExperienceError] = useState<string | null>(null);
+  const [articleError, setArticleError] = useState<string | null>(null);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingExperienceId, setEditingExperienceId] = useState<string | null>(null);
+  const [editingArticleId, setEditingArticleId] = useState<string | null>(null);
   const [projectForm, setProjectForm] = useState({
     title: '',
     category: 'Design',
@@ -126,6 +149,17 @@ export function Dashboard(props: DashboardProps) {
     description: '',
     certificateUrl: '',
     showCertificate: true,
+  });
+  const [articleForm, setArticleForm] = useState({
+    title: '',
+    publication: '',
+    publicationDate: '',
+    summary: '',
+    link: '',
+    doi: '',
+    authors: '',
+    showInPortfolio: true,
+    showInCv: true,
   });
   const [experienceCertUploading, setExperienceCertUploading] = useState(false);
   const [draggedExperienceId, setDraggedExperienceId] = useState<string | null>(null);
@@ -171,12 +205,43 @@ export function Dashboard(props: DashboardProps) {
     es: { title: '', company: '', description: '' },
   });
 
+  const [enableArticleTranslations, setEnableArticleTranslations] = useState(false);
+  const [articleTranslations, setArticleTranslations] = useState<ScientificArticleTranslations>({
+    en: { title: '', summary: '', publication: '' },
+    es: { title: '', summary: '', publication: '' },
+  });
+
   const [localeSaving, setLocaleSaving] = useState(false);
   const [localeError, setLocaleError] = useState<string | null>(null);
   const [shareLink, setShareLink] = useState('');
   const [shareLinkCopied, setShareLinkCopied] = useState(false);
   const [shareLinkError, setShareLinkError] = useState<string | null>(null);
   const shareCopyTimeoutRef = useRef<number>();
+
+  const sanitizeYearInput = (value: string) => value.replace(/[^0-9]/g, '').slice(0, 4);
+  const deriveEducationPeriod = (start?: string | null, end?: string | null) => {
+    const startYear = (start ?? '').trim();
+    const endYear = (end ?? '').trim();
+    if (startYear && endYear) {
+      return `${startYear} - ${endYear}`;
+    }
+    if (startYear) {
+      return startYear;
+    }
+    if (endYear) {
+      return endYear;
+    }
+    return '';
+  };
+  const extractYearsFromPeriod = (raw?: string | null) => {
+    if (!raw || typeof raw !== 'string') {
+      return { start: '', end: '' };
+    }
+    const parts = raw.split(/[-–—]/);
+    const start = sanitizeYearInput(parts[0] ?? '');
+    const end = sanitizeYearInput(parts[1] ?? '');
+    return { start, end };
+  };
 
   useEffect(() => {
     setProfileForm({
@@ -283,8 +348,27 @@ export function Dashboard(props: DashboardProps) {
     });
   };
 
+  const resetArticleForm = () => {
+    setArticleForm({
+      title: '',
+      publication: '',
+      publicationDate: '',
+      summary: '',
+      link: '',
+      doi: '',
+      authors: '',
+      showInPortfolio: true,
+      showInCv: true,
+    });
+    setEnableArticleTranslations(false);
+    setArticleTranslations({
+      en: { title: '', summary: '', publication: '' },
+      es: { title: '', summary: '', publication: '' },
+    });
+  };
+
   const renderSettings = () => (
-    <div className="px-4 py-6 sm:px-6 lg:px-8">
+    <div className="w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8 mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-[#1a1534] mb-2">{t('settings.title')}</h1>
         <p className="text-[#6b5d7a]">{t('settings.subtitle')}</p>
@@ -401,6 +485,13 @@ export function Dashboard(props: DashboardProps) {
     setShowAddExperience(true);
   };
 
+  const openNewArticle = () => {
+    setArticleError(null);
+    setEditingArticleId(null);
+    resetArticleForm();
+    setShowAddArticle(true);
+  };
+
   const openEditProject = (project: Project) => {
     setProjectError(null);
     setEditingProjectId(project.id);
@@ -475,6 +566,44 @@ export function Dashboard(props: DashboardProps) {
     }
     
     setShowAddExperience(true);
+  };
+
+  const openEditArticle = (article: ScientificArticle) => {
+    setArticleError(null);
+    setEditingArticleId(article.id);
+    setArticleForm({
+      title: article.title,
+      publication: article.publication ?? '',
+      publicationDate: article.publicationDate ?? '',
+      summary: article.summary ?? '',
+      link: article.link ?? '',
+      doi: article.doi ?? '',
+      authors: (article.authors ?? []).join(', '),
+      showInPortfolio: article.showInPortfolio ?? true,
+      showInCv: article.showInCv ?? true,
+    });
+    if (article.translations) {
+      setEnableArticleTranslations(true);
+      setArticleTranslations({
+        en: {
+          title: article.translations.en?.title ?? '',
+          summary: article.translations.en?.summary ?? '',
+          publication: article.translations.en?.publication ?? '',
+        },
+        es: {
+          title: article.translations.es?.title ?? '',
+          summary: article.translations.es?.summary ?? '',
+          publication: article.translations.es?.publication ?? '',
+        },
+      });
+    } else {
+      setEnableArticleTranslations(false);
+      setArticleTranslations({
+        en: { title: '', summary: '', publication: '' },
+        es: { title: '', summary: '', publication: '' },
+      });
+    }
+    setShowAddArticle(true);
   };
 
   const handleProjectSave = async () => {
@@ -740,6 +869,159 @@ export function Dashboard(props: DashboardProps) {
     setShowAddExperience(false);
   };
 
+  const mapArticleFormToPayload = (): Omit<ScientificArticle, 'id'> => {
+    const authors = articleForm.authors
+      .split(',')
+      .map((author) => author.trim())
+      .filter(Boolean);
+
+    let translations: ScientificArticle['translations'] = undefined;
+    if (enableArticleTranslations) {
+      const enTranslation: Record<string, string> = {};
+      const esTranslation: Record<string, string> = {};
+
+      const enTitle = articleTranslations.en?.title?.trim();
+      const enSummary = articleTranslations.en?.summary?.trim();
+      const enPublication = articleTranslations.en?.publication?.trim();
+      if (enTitle) enTranslation.title = enTitle;
+      if (enSummary) enTranslation.summary = enSummary;
+      if (enPublication) enTranslation.publication = enPublication;
+
+      const esTitle = articleTranslations.es?.title?.trim();
+      const esSummary = articleTranslations.es?.summary?.trim();
+      const esPublication = articleTranslations.es?.publication?.trim();
+      if (esTitle) esTranslation.title = esTitle;
+      if (esSummary) esTranslation.summary = esSummary;
+      if (esPublication) esTranslation.publication = esPublication;
+
+      if (Object.keys(enTranslation).length > 0 || Object.keys(esTranslation).length > 0) {
+        translations = {
+          en: Object.keys(enTranslation).length > 0 ? enTranslation : undefined,
+          es: Object.keys(esTranslation).length > 0 ? esTranslation : undefined,
+        };
+      }
+    }
+
+    return {
+      title: articleForm.title.trim(),
+      publication: articleForm.publication.trim() || undefined,
+      publicationDate: articleForm.publicationDate.trim() || undefined,
+      summary: articleForm.summary.trim() || undefined,
+      link: articleForm.link.trim() || undefined,
+      doi: articleForm.doi.trim() || undefined,
+      authors: authors.length > 0 ? authors : undefined,
+      showInPortfolio: articleForm.showInPortfolio,
+      showInCv: articleForm.showInCv,
+      position: undefined,
+      translations,
+    };
+  };
+
+  const handleArticleSave = async () => {
+    setArticleError(null);
+
+    if (!articleForm.title.trim()) {
+      setArticleError('Informe um titulo para o artigo.');
+      return;
+    }
+
+    const payload = mapArticleFormToPayload();
+
+    if (editingArticleId) {
+      if (userId && isSupabaseConfigured) {
+        const updated = await updateArticle(userId, editingArticleId, payload);
+        if (!updated) {
+          setArticleError('Nao foi possivel salvar o artigo.');
+          return;
+        }
+        onArticlesChange(articles.map((article) => (article.id === updated.id ? updated : article)));
+      } else {
+        onArticlesChange(
+          articles.map((article) => (
+            article.id === editingArticleId ? { id: editingArticleId, ...payload } : article
+          )),
+        );
+      }
+    } else if (userId && isSupabaseConfigured) {
+      const created = await createArticle(userId, payload);
+      if (!created) {
+        setArticleError('Nao foi possivel salvar o artigo.');
+        return;
+      }
+      onArticlesChange([created, ...articles]);
+    } else {
+      const fallbackId = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : String(Date.now());
+      onArticlesChange([{ id: fallbackId, ...payload }, ...articles]);
+    }
+
+    setEditingArticleId(null);
+    resetArticleForm();
+    setShowAddArticle(false);
+  };
+
+  const handleArticleDelete = async (articleId: string) => {
+    const confirmed = typeof window === 'undefined'
+      ? true
+      : window.confirm('Tem certeza que deseja excluir este artigo?');
+    if (!confirmed) {
+      return;
+    }
+
+    if (userId && isSupabaseConfigured) {
+      const ok = await deleteArticle(userId, articleId);
+      if (!ok) {
+        setArticleError('Nao foi possivel excluir o artigo.');
+        return;
+      }
+    }
+
+    onArticlesChange(articles.filter((article) => article.id !== articleId));
+  };
+
+  const handleArticleVisibilityChange = async (
+    article: ScientificArticle,
+    field: 'showInPortfolio' | 'showInCv',
+    value: boolean,
+  ) => {
+    if (article[field] === value) {
+      return;
+    }
+
+    if (userId && isSupabaseConfigured) {
+      const payload: Omit<ScientificArticle, 'id'> = {
+        title: article.title,
+        publication: article.publication ?? undefined,
+        publicationDate: article.publicationDate ?? undefined,
+        summary: article.summary ?? undefined,
+        link: article.link ?? undefined,
+        doi: article.doi ?? undefined,
+        authors: article.authors ?? undefined,
+        showInPortfolio: field === 'showInPortfolio' ? value : article.showInPortfolio ?? true,
+        showInCv: field === 'showInCv' ? value : article.showInCv ?? true,
+        position: article.position,
+        translations: article.translations,
+      };
+
+      const updated = await updateArticle(userId, article.id, payload);
+      if (!updated) {
+        setArticleError('Nao foi possivel atualizar o artigo.');
+        return;
+      }
+      onArticlesChange(articles.map((item) => (item.id === updated.id ? updated : item)));
+      return;
+    }
+
+    onArticlesChange(
+      articles.map((item) => (
+        item.id === article.id
+          ? { ...article, [field]: value }
+          : item
+      )),
+    );
+  };
+
   const handleProjectDelete = async (projectId: string) => {
     const confirmed = typeof window === 'undefined'
       ? true
@@ -858,6 +1140,28 @@ export function Dashboard(props: DashboardProps) {
       ? profileForm.education
       : [];
 
+    const normalizedEducation = safeEducation
+      .map((entry) => {
+        const { start: periodStart, end: periodEnd } = extractYearsFromPeriod(entry.period);
+        const startYear = sanitizeYearInput(entry.startYear ?? periodStart);
+        const endYear = sanitizeYearInput(entry.endYear ?? periodEnd);
+        const rawPeriod = typeof entry.period === 'string' ? entry.period.trim() : '';
+        const normalizedPeriod = deriveEducationPeriod(startYear, endYear) || rawPeriod;
+        const trimmedInstitution = entry.institution?.trim() ?? '';
+        const trimmedDegree = entry.degree?.trim() ?? '';
+        const trimmedDescription = entry.description?.trim();
+
+        return {
+          institution: trimmedInstitution,
+          degree: trimmedDegree,
+          description: trimmedDescription ? trimmedDescription : undefined,
+          startYear: startYear || undefined,
+          endYear: endYear || undefined,
+          period: normalizedPeriod || undefined,
+        };
+      })
+      .filter((entry) => entry.institution || entry.degree || entry.startYear || entry.endYear || entry.description);
+
     const payload: Omit<UserProfile, 'id'> = {
       fullName: profileForm.fullName,
       preferredLocale: userProfile.preferredLocale ?? locale,
@@ -868,7 +1172,7 @@ export function Dashboard(props: DashboardProps) {
       phone: profileForm.phone || undefined,
       photoUrl: profileForm.photoUrl || undefined,
       skills,
-      education: safeEducation,
+      education: normalizedEducation,
       translations: profileTranslations,
       socialLinks: {
         website: profileForm.socialLinks.website || undefined,
@@ -982,7 +1286,7 @@ export function Dashboard(props: DashboardProps) {
   };
 
   const renderDashboard = () => (
-    <div className="px-4 py-6 sm:px-6 lg:px-8">
+    <div className="w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8 mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-[#1a1534] mb-2">{t('dash.title')}</h1>
         <p className="text-[#6b5d7a]">{t('dash.subtitle')}</p>
@@ -1033,7 +1337,7 @@ export function Dashboard(props: DashboardProps) {
       </div>
 
       <Card>
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
           <h2 className="text-xl font-bold text-[#1a1534]">{t('dash.quickActions')}</h2>
         </div>
         <div className="grid md:grid-cols-2 gap-4">
@@ -1052,6 +1356,14 @@ export function Dashboard(props: DashboardProps) {
           >
             <Plus className="w-5 h-5 mr-2" />
             {t('dash.addProject')}
+          </Button>
+          <Button 
+            variant="outline" 
+            className="justify-start"
+            onClick={() => setActiveSection('articles')}
+          >
+            <BookOpen className="w-5 h-5 mr-2" />
+            {t('dash.addArticle')}
           </Button>
           <Button 
             variant="outline" 
@@ -1075,7 +1387,7 @@ export function Dashboard(props: DashboardProps) {
   );
 
   const renderPortfolio = () => (
-    <div className="px-4 py-6 sm:px-6 lg:px-8">
+    <div className="w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8 mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-[#1a1534] mb-2">{t('portfolio.title')}</h1>
         <p className="text-[#6b5d7a]">{t('portfolio.subtitle')}</p>
@@ -1127,7 +1439,7 @@ export function Dashboard(props: DashboardProps) {
               <div className="grid md:grid-cols-2 gap-6">
                 <div>
                   <div className="mb-6">
-                    <div className="flex items-center gap-6 mb-6">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-6 mb-6">
                       <div className="w-24 h-24 rounded-full bg-gradient-to-r from-[#a21d4c] to-[#c92563] flex items-center justify-center text-white text-2xl font-bold overflow-hidden">
                         {profileForm.photoUrl ? (
                           <img src={profileForm.photoUrl} alt="Foto" className="w-full h-full object-cover" />
@@ -1210,7 +1522,7 @@ export function Dashboard(props: DashboardProps) {
                     </div>
 
                     <div className="border-t border-[#e8e3f0] pt-4 mt-6">
-                      <div className="flex items-center justify-between mb-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
                         <div>
                           <label className="block text-sm font-medium text-[#1a1534] mb-1">
                             Traduções (Inglês/Espanhol)
@@ -1319,7 +1631,7 @@ export function Dashboard(props: DashboardProps) {
                         <div className="space-y-4">
                           {educationList.map((item, index) => (
                             <div key={`${item.institution}-${index}`} className="rounded-lg border border-[#e8e3f0] p-4 bg-white">
-                              <div className="grid md:grid-cols-2 gap-4">
+                              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                                 <div>
                                   <label className="block text-xs text-[#6b5d7a] mb-1">Instituicao</label>
                                   <input
@@ -1347,19 +1659,56 @@ export function Dashboard(props: DashboardProps) {
                                   />
                                 </div>
                                 <div>
-                                  <label className="block text-xs text-[#6b5d7a] mb-1">Periodo</label>
+                                  <label className="block text-xs text-[#6b5d7a] mb-1">Inicio</label>
                                   <input
                                     type="text"
-                                    value={item.period}
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    maxLength={4}
+                                    value={item.startYear ?? ''}
                                     onChange={(e) => {
                                       const next = [...educationList];
-                                      next[index] = { ...next[index], period: e.target.value };
+                                      const sanitized = sanitizeYearInput(e.target.value);
+                                      const current = next[index] as typeof item;
+                                      const endYear = sanitizeYearInput(current?.endYear ?? '');
+                                      next[index] = {
+                                        ...current,
+                                        startYear: sanitized,
+                                        endYear,
+                                        period: deriveEducationPeriod(sanitized, endYear),
+                                      } as typeof item;
                                       setProfileForm({ ...profileForm, education: next });
                                     }}
+                                    placeholder="2020"
                                     className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
                                   />
                                 </div>
                                 <div>
+                                  <label className="block text-xs text-[#6b5d7a] mb-1">Conclusao</label>
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    maxLength={4}
+                                    value={item.endYear ?? ''}
+                                    onChange={(e) => {
+                                      const next = [...educationList];
+                                      const sanitized = sanitizeYearInput(e.target.value);
+                                      const current = next[index] as typeof item;
+                                      const startYear = sanitizeYearInput(current?.startYear ?? '');
+                                      next[index] = {
+                                        ...current,
+                                        startYear,
+                                        endYear: sanitized,
+                                        period: deriveEducationPeriod(startYear, sanitized),
+                                      } as typeof item;
+                                      setProfileForm({ ...profileForm, education: next });
+                                    }}
+                                    placeholder="2024"
+                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                                  />
+                                </div>
+                                <div className="md:col-span-2 lg:col-span-4">
                                   <label className="block text-xs text-[#6b5d7a] mb-1">Descricao</label>
                                   <input
                                     type="text"
@@ -1547,7 +1896,7 @@ export function Dashboard(props: DashboardProps) {
                 </div>
               </div>
 
-              <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-[#e8e3f0]">
+              <div className="flex flex-col gap-3 sm:flex-row sm:justify-end mt-6 pt-6 border-t border-[#e8e3f0]">
                 <Button
                   variant="ghost"
                   onClick={() => setProfileForm({
@@ -1589,7 +1938,7 @@ export function Dashboard(props: DashboardProps) {
       </Card>
 
       <Card className="mb-6">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
           <div>
             <h2 className="text-xl font-bold text-[#1a1534]">Formacoes</h2>
             <p className="text-sm text-[#6b5d7a]">Adicione suas formacoes academicas e cursos.</p>
@@ -1605,7 +1954,7 @@ export function Dashboard(props: DashboardProps) {
                 ...profileForm,
                 education: [
                   ...currentEducation,
-                  { institution: '', degree: '', period: '', description: '' }
+                  { institution: '', degree: '', startYear: '', endYear: '', period: '', description: '' }
                 ],
               });
             }}
@@ -1628,7 +1977,7 @@ export function Dashboard(props: DashboardProps) {
             <div className="space-y-4">
               {educationList.map((item, index) => (
                 <div key={`${item.institution}-${index}`} className="rounded-lg border border-[#e8e3f0] p-4 bg-white">
-                  <div className="grid md:grid-cols-2 gap-4">
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                     <div>
                       <label className="block text-xs text-[#6b5d7a] mb-1">Instituicao</label>
                       <input
@@ -1656,19 +2005,56 @@ export function Dashboard(props: DashboardProps) {
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-[#6b5d7a] mb-1">Periodo</label>
+                      <label className="block text-xs text-[#6b5d7a] mb-1">Inicio</label>
                       <input
                         type="text"
-                        value={item.period}
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={4}
+                        value={item.startYear ?? ''}
                         onChange={(e) => {
                           const next = [...educationList];
-                          next[index] = { ...next[index], period: e.target.value };
+                          const sanitized = sanitizeYearInput(e.target.value);
+                          const current = next[index] as typeof item;
+                          const endYear = sanitizeYearInput(current?.endYear ?? '');
+                          next[index] = {
+                            ...current,
+                            startYear: sanitized,
+                            endYear,
+                            period: deriveEducationPeriod(sanitized, endYear),
+                          } as typeof item;
                           setProfileForm({ ...profileForm, education: next });
                         }}
+                        placeholder="2020"
                         className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
                       />
                     </div>
                     <div>
+                      <label className="block text-xs text-[#6b5d7a] mb-1">Conclusao</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        maxLength={4}
+                        value={item.endYear ?? ''}
+                        onChange={(e) => {
+                          const next = [...educationList];
+                          const sanitized = sanitizeYearInput(e.target.value);
+                          const current = next[index] as typeof item;
+                          const startYear = sanitizeYearInput(current?.startYear ?? '');
+                          next[index] = {
+                            ...current,
+                            startYear,
+                            endYear: sanitized,
+                            period: deriveEducationPeriod(startYear, sanitized),
+                          } as typeof item;
+                          setProfileForm({ ...profileForm, education: next });
+                        }}
+                        placeholder="2024"
+                        className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                      />
+                    </div>
+                    <div className="md:col-span-2 lg:col-span-4">
                       <label className="block text-xs text-[#6b5d7a] mb-1">Descricao</label>
                       <input
                         type="text"
@@ -1704,8 +2090,8 @@ export function Dashboard(props: DashboardProps) {
   );
 
   const renderProjects = () => (
-    <div className="px-4 py-6 sm:px-6 lg:px-8">
-      <div className="flex items-center justify-between mb-8">
+    <div className="w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8 mx-auto">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold text-[#1a1534] mb-2">{t('projects.title')}</h1>
           <p className="text-[#6b5d7a]">Gerencie seus projetos e trabalhos realizados.</p>
@@ -1723,7 +2109,7 @@ export function Dashboard(props: DashboardProps) {
 
       {showAddProject && (
         <Card className="mb-6 border-2 border-[#a21d4c]">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
             <h2 className="text-xl font-bold text-[#1a1534]">
               {editingProjectId ? 'Editar Projeto' : 'Novo Projeto'}
             </h2>
@@ -1944,7 +2330,7 @@ export function Dashboard(props: DashboardProps) {
 
             {/* Project Translations Section */}
             <div className="border-t border-[#e8e3f0] pt-4">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
                 <div>
                   <label className="block text-sm font-medium text-[#1a1534] mb-1">
                     Traduções (Inglês/Espanhol)
@@ -2078,7 +2464,7 @@ export function Dashboard(props: DashboardProps) {
             </div>
           )}
 
-          <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-[#e8e3f0]">
+          <div className="flex flex-col gap-3 sm:flex-row sm:justify-end mt-6 pt-6 border-t border-[#e8e3f0]">
             <Button
               variant="ghost"
               onClick={() => {
@@ -2134,8 +2520,8 @@ export function Dashboard(props: DashboardProps) {
   );
 
   const renderExperiences = () => (
-    <div className="px-4 py-6 sm:px-6 lg:px-8">
-      <div className="flex items-center justify-between mb-8">
+    <div className="w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8 mx-auto">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold text-[#1a1534] mb-2">{t('experiences.title')}</h1>
           <p className="text-[#6b5d7a]">Adicione suas experiências de trabalho e formação.</p>
@@ -2148,7 +2534,7 @@ export function Dashboard(props: DashboardProps) {
 
       {showAddExperience && (
         <Card className="mb-6 border-2 border-[#a21d4c]">
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
             <h2 className="text-xl font-bold text-[#1a1534]">
               {editingExperienceId ? 'Editar Experiência' : 'Nova Experiência'}
             </h2>
@@ -2253,7 +2639,7 @@ export function Dashboard(props: DashboardProps) {
 
             {/* Experience Translations Section */}
             <div className="border-t border-[#e8e3f0] pt-4 mt-4">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
                 <div>
                   <label className="block text-sm font-medium text-[#1a1534] mb-1">
                     Traduções (Inglês/Espanhol)
@@ -2387,7 +2773,7 @@ export function Dashboard(props: DashboardProps) {
             </div>
           )}
 
-          <div className="flex justify-end gap-3 mt-6 pt-6 border-t border-[#e8e3f0]">
+          <div className="flex flex-col gap-3 sm:flex-row sm:justify-end mt-6 pt-6 border-t border-[#e8e3f0]">
             <Button
               variant="ghost"
               onClick={() => {
@@ -2470,8 +2856,377 @@ export function Dashboard(props: DashboardProps) {
     </div>
   );
 
+  const renderArticles = () => (
+    <div className="w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8 mx-auto">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-8">
+        <div>
+          <h1 className="text-3xl font-bold text-[#1a1534] mb-2">{t('articles.title')}</h1>
+          <p className="text-[#6b5d7a]">{t('articles.subtitle')}</p>
+        </div>
+        <Button variant="primary" onClick={openNewArticle}>
+          <Plus className="w-5 h-5 mr-2" />
+          {t('articles.add')}
+        </Button>
+      </div>
+
+      {showAddArticle && (
+        <Card className="mb-6 border-2 border-[#a21d4c]">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-6">
+            <h2 className="text-xl font-bold text-[#1a1534]">
+              {editingArticleId ? t('articles.edit') : t('articles.new')}
+            </h2>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAddArticle(false);
+                setEditingArticleId(null);
+                resetArticleForm();
+              }}
+            >
+              <X className="w-5 h-5 text-[#6b5d7a] hover:text-[#1a1534]" />
+            </button>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="md:col-span-2">
+              <label className="block text-sm text-[#6b5d7a] mb-2">{t('articles.form.title')}</label>
+              <input
+                type="text"
+                value={articleForm.title}
+                onChange={(e) => setArticleForm({ ...articleForm, title: e.target.value })}
+                placeholder={t('articles.form.titlePlaceholder')}
+                className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-[#6b5d7a] mb-2">{t('articles.form.publication')}</label>
+              <input
+                type="text"
+                value={articleForm.publication}
+                onChange={(e) => setArticleForm({ ...articleForm, publication: e.target.value })}
+                placeholder={t('articles.form.publicationPlaceholder')}
+                className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-[#6b5d7a] mb-2">{t('articles.form.publicationDate')}</label>
+              <input
+                type="text"
+                value={articleForm.publicationDate}
+                onChange={(e) => setArticleForm({ ...articleForm, publicationDate: e.target.value })}
+                placeholder="2024"
+                className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm text-[#6b5d7a] mb-2">{t('articles.form.summary')}</label>
+              <textarea
+                rows={4}
+                value={articleForm.summary}
+                onChange={(e) => setArticleForm({ ...articleForm, summary: e.target.value })}
+                placeholder={t('articles.form.summaryPlaceholder')}
+                className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
+              />
+            </div>
+
+            <div className="md:col-span-2 border-t border-[#e8e3f0] pt-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
+                <div>
+                  <label className="block text-sm font-medium text-[#1a1534] mb-1">
+                    {t('articles.translations.heading')}
+                  </label>
+                  <p className="text-xs text-[#6b5d7a]">
+                    {t('articles.translations.description')}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEnableArticleTranslations(!enableArticleTranslations)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    enableArticleTranslations ? 'bg-[#a21d4c]' : 'bg-gray-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      enableArticleTranslations ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {enableArticleTranslations && (
+                <div className="space-y-4">
+                  <div className="bg-[#f5f3f7] p-4 rounded-lg">
+                    <h4 className="text-sm font-medium text-[#1a1534] mb-3 flex items-center gap-2">
+                      <Globe className="w-4 h-4" />
+                      English
+                    </h4>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs text-[#6b5d7a] mb-1">{t('articles.translations.fields.titleEn')}</label>
+                        <input
+                          type="text"
+                          value={articleTranslations.en?.title ?? ''}
+                          onChange={(e) => setArticleTranslations({
+                            ...articleTranslations,
+                            en: { ...(articleTranslations.en ?? {}), title: e.target.value },
+                          })}
+                          className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c] text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-[#6b5d7a] mb-1">{t('articles.translations.fields.summaryEn')}</label>
+                        <textarea
+                          rows={3}
+                          value={articleTranslations.en?.summary ?? ''}
+                          onChange={(e) => setArticleTranslations({
+                            ...articleTranslations,
+                            en: { ...(articleTranslations.en ?? {}), summary: e.target.value },
+                          })}
+                          className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c] text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-[#6b5d7a] mb-1">{t('articles.translations.fields.publicationEn')}</label>
+                        <input
+                          type="text"
+                          value={articleTranslations.en?.publication ?? ''}
+                          onChange={(e) => setArticleTranslations({
+                            ...articleTranslations,
+                            en: { ...(articleTranslations.en ?? {}), publication: e.target.value },
+                          })}
+                          className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c] text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-[#f5f3f7] p-4 rounded-lg">
+                    <h4 className="text-sm font-medium text-[#1a1534] mb-3 flex items-center gap-2">
+                      <Globe className="w-4 h-4" />
+                      Español
+                    </h4>
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-xs text-[#6b5d7a] mb-1">{t('articles.translations.fields.titleEs')}</label>
+                        <input
+                          type="text"
+                          value={articleTranslations.es?.title ?? ''}
+                          onChange={(e) => setArticleTranslations({
+                            ...articleTranslations,
+                            es: { ...(articleTranslations.es ?? {}), title: e.target.value },
+                          })}
+                          className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c] text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-[#6b5d7a] mb-1">{t('articles.translations.fields.summaryEs')}</label>
+                        <textarea
+                          rows={3}
+                          value={articleTranslations.es?.summary ?? ''}
+                          onChange={(e) => setArticleTranslations({
+                            ...articleTranslations,
+                            es: { ...(articleTranslations.es ?? {}), summary: e.target.value },
+                          })}
+                          className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c] text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-[#6b5d7a] mb-1">{t('articles.translations.fields.publicationEs')}</label>
+                        <input
+                          type="text"
+                          value={articleTranslations.es?.publication ?? ''}
+                          onChange={(e) => setArticleTranslations({
+                            ...articleTranslations,
+                            es: { ...(articleTranslations.es ?? {}), publication: e.target.value },
+                          })}
+                          className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c] text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-sm text-[#6b5d7a] mb-2">{t('articles.form.authors')}</label>
+              <input
+                type="text"
+                value={articleForm.authors}
+                onChange={(e) => setArticleForm({ ...articleForm, authors: e.target.value })}
+                placeholder={t('articles.form.authorsPlaceholder')}
+                className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-[#6b5d7a] mb-2">{t('articles.form.doi')}</label>
+              <input
+                type="text"
+                value={articleForm.doi}
+                onChange={(e) => setArticleForm({ ...articleForm, doi: e.target.value })}
+                placeholder="10.xxxx/xxxx"
+                className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label className="block text-sm text-[#6b5d7a] mb-2">{t('articles.form.link')}</label>
+              <input
+                type="url"
+                value={articleForm.link}
+                onChange={(e) => setArticleForm({ ...articleForm, link: e.target.value })}
+                placeholder="https://"
+                className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
+              />
+            </div>
+
+            <div className="md:col-span-2 grid sm:grid-cols-2 gap-3">
+              <label className="flex items-center gap-2 text-sm text-[#1a1534]">
+                <input
+                  type="checkbox"
+                  checked={articleForm.showInPortfolio}
+                  onChange={(e) => setArticleForm({ ...articleForm, showInPortfolio: e.target.checked })}
+                  className="h-4 w-4 rounded border-[#e8e3f0] text-[#a21d4c] focus:ring-[#a21d4c]"
+                />
+                {t('articles.form.showPortfolio')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-[#1a1534]">
+                <input
+                  type="checkbox"
+                  checked={articleForm.showInCv}
+                  onChange={(e) => setArticleForm({ ...articleForm, showInCv: e.target.checked })}
+                  className="h-4 w-4 rounded border-[#e8e3f0] text-[#a21d4c] focus:ring-[#a21d4c]"
+                />
+                {t('articles.form.showCv')}
+              </label>
+            </div>
+          </div>
+
+          {articleError ? (
+            <p className="mt-4 text-sm text-[#a21d4c]">{articleError}</p>
+          ) : null}
+
+          <div className="flex justify-end gap-3 mt-6">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setShowAddArticle(false);
+                setEditingArticleId(null);
+                resetArticleForm();
+              }}
+            >
+              {t('articles.actions.cancel')}
+            </Button>
+            <Button variant="primary" onClick={handleArticleSave}>
+              {t('articles.actions.save')}
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {!showAddArticle && articleError ? (
+        <p className="mb-4 text-sm text-[#a21d4c]">{articleError}</p>
+      ) : null}
+
+      {articles.length === 0 ? (
+        <Card>
+          <div className="py-10 text-center">
+            <BookOpen className="w-10 h-10 mx-auto text-[#c92563] mb-3" />
+            <p className="text-[#6b5d7a]">{t('articles.empty')}</p>
+          </div>
+        </Card>
+      ) : (
+        <div className="grid gap-4">
+          {articles.map((article) => (
+            <Card key={article.id} className="p-6 space-y-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:justify-between sm:items-start">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <BookOpen className="w-5 h-5 text-[#c92563]" />
+                    <h3 className="text-lg font-semibold text-[#1a1534] break-words">{article.title}</h3>
+                  </div>
+                  <div className="text-sm text-[#6b5d7a] space-y-1">
+                    {article.publication ? (
+                      <p>
+                        <span className="font-medium text-[#1a1534]">{t('articles.labels.publication')}:</span>{' '}
+                        {article.publication}
+                        {article.publicationDate ? ` • ${article.publicationDate}` : ''}
+                      </p>
+                    ) : null}
+                    {article.doi ? (
+                      <p>
+                        <span className="font-medium text-[#1a1534]">DOI:</span> {article.doi}
+                      </p>
+                    ) : null}
+                    {article.authors && article.authors.length > 0 ? (
+                      <p>
+                        <span className="font-medium text-[#1a1534]">{t('articles.labels.authors')}:</span>{' '}
+                        {article.authors.join(', ')}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => openEditArticle(article)}>
+                    <Edit className="w-4 h-4 mr-1" />
+                    {t('articles.actions.edit')}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => handleArticleDelete(article.id)}>
+                    <Trash2 className="w-4 h-4 mr-1" />
+                    {t('articles.actions.delete')}
+                  </Button>
+                </div>
+              </div>
+
+            {article.summary ? (
+                <p className="text-sm text-[#4d415a] leading-relaxed">{article.summary}</p>
+              ) : null}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant={article.showInPortfolio === false ? 'outline' : 'secondary'}
+                  size="sm"
+                  onClick={() => handleArticleVisibilityChange(article, 'showInPortfolio', !(article.showInPortfolio ?? true))}
+                >
+                  {article.showInPortfolio === false
+                    ? t('articles.visibility.addPortfolio')
+                    : t('articles.visibility.removePortfolio')}
+                </Button>
+                <Button
+                  variant={article.showInCv === false ? 'outline' : 'secondary'}
+                  size="sm"
+                  onClick={() => handleArticleVisibilityChange(article, 'showInCv', !(article.showInCv ?? true))}
+                >
+                  {article.showInCv === false
+                    ? t('articles.visibility.addCv')
+                    : t('articles.visibility.removeCv')}
+                </Button>
+                {article.link ? (
+                  <a
+                    href={article.link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 text-sm text-[#c92563] hover:text-[#a21d4c]"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    {t('articles.links.view')}
+                  </a>
+                ) : null}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
   const renderLanguage = () => (
-    <div className="px-4 py-6 sm:px-6 lg:px-8">
+    <div className="w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8 mx-auto">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-[#1a1534] mb-2">{t('language.title')}</h1>
         <p className="text-[#6b5d7a]">Defina o idioma padrao da plataforma.</p>
@@ -2518,6 +3273,8 @@ export function Dashboard(props: DashboardProps) {
         return renderPortfolio();
       case 'projects':
         return renderProjects();
+      case 'articles':
+        return renderArticles();
       case 'experiences':
         return renderExperiences();
       case 'cv':
@@ -2529,6 +3286,7 @@ export function Dashboard(props: DashboardProps) {
             userProfile={userProfile}
             projects={projects}
             experiences={experiences}
+            articles={articles}
             planTier={planTier}
           />
         );
@@ -2540,6 +3298,7 @@ export function Dashboard(props: DashboardProps) {
             userProfile={userProfile}
             projects={projects}
             experiences={experiences}
+            articles={articles}
             featuredVideos={featuredVideos}
             cvs={cvs}
             planTier={planTier}

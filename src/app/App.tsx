@@ -26,6 +26,7 @@ import {
   fetchCvs,
   fetchExperiences,
   fetchFeaturedVideos,
+  fetchScientificArticles,
   fetchProjects,
   fetchUserProfile,
   fetchSubscription,
@@ -34,7 +35,17 @@ import {
   upsertUserTheme,
   updatePreferredLocale,
 } from './data/portfolio';
-import type { CV, Experience, FeaturedVideo, Locale, Project, Subscription, UserProfile, UserTheme } from './types';
+import type {
+  CV,
+  Experience,
+  FeaturedVideo,
+  Locale,
+  Project,
+  ScientificArticle,
+  Subscription,
+  UserProfile,
+  UserTheme,
+} from './types';
 
 // Import other components
 import { Auth } from './components/Auth';
@@ -73,6 +84,7 @@ interface PublicPortfolioResponse {
   featuredVideos: FeaturedVideo[];
   projects: Project[];
   experiences: Experience[];
+  articles: ScientificArticle[];
   cvs: CV[];
 }
 
@@ -110,6 +122,9 @@ export default function App() {
   // Experiences state
   const [experiences, setExperiences] = useState<Experience[]>([]);
 
+  // Scientific articles state
+  const [articles, setArticles] = useState<ScientificArticle[]>([]);
+
   // CVs state
   const [cvs, setCvs] = useState<CV[]>([]);
   const [publicViewUserId, setPublicViewUserId] = useState<string | null>(null);
@@ -129,6 +144,7 @@ export default function App() {
     setFeaturedVideos([]);
     setProjects([]);
     setExperiences([]);
+    setArticles([]);
     setCvs([]);
     setSubscription(null);
 
@@ -154,6 +170,7 @@ export default function App() {
       setFeaturedVideos(Array.isArray(data.featuredVideos) ? data.featuredVideos : []);
       setProjects(Array.isArray(data.projects) ? data.projects : []);
       setExperiences(Array.isArray(data.experiences) ? data.experiences : []);
+      setArticles(Array.isArray(data.articles) ? data.articles : []);
       setCvs(Array.isArray(data.cvs) ? data.cvs : []);
 
       if (data.profile?.preferredLocale && data.profile.preferredLocale !== locale) {
@@ -226,6 +243,7 @@ export default function App() {
         setFeaturedVideos([]);
         setProjects([]);
         setExperiences([]);
+        setArticles([]);
         setCvs([]);
         setSubscription(null);
       }
@@ -329,6 +347,7 @@ export default function App() {
     setFeaturedVideos([]);
     setProjects([]);
     setExperiences([]);
+    setArticles([]);
     setCvs([]);
     setSubscription(null);
 
@@ -341,10 +360,11 @@ export default function App() {
       fetchFeaturedVideos(session.user.id),
       fetchProjects(session.user.id),
       fetchExperiences(session.user.id),
+      fetchScientificArticles(session.user.id),
       fetchCvs(session.user.id),
       fetchSubscription(session.user.id),
     ])
-      .then(([profileData, themeData, videoData, projectData, experienceData, cvData, subscriptionData]) => {
+      .then(([profileData, themeData, videoData, projectData, experienceData, articleData, cvData, subscriptionData]) => {
         console.log('Dados recebidos do Supabase:');
         console.log('  profileData:', profileData);
         console.log('  themeData:', themeData);
@@ -391,6 +411,7 @@ export default function App() {
         setFeaturedVideos(videoData);
         setProjects(projectData);
         setExperiences(experienceData);
+        setArticles(articleData);
         setCvs(cvData);
         if (subscriptionData) {
           console.log('Atualizando subscription:', subscriptionData);
@@ -608,6 +629,7 @@ export default function App() {
             setFeaturedVideos([]);
             setProjects([]);
             setExperiences([]);
+            setArticles([]);
             setCvs([]);
             setSubscription(null);
             setCurrentPage('landing');
@@ -628,6 +650,8 @@ export default function App() {
           onProjectsChange={setProjects}
           experiences={experiences}
           onExperiencesChange={setExperiences}
+          articles={articles}
+          onArticlesChange={setArticles}
           cvs={cvs}
           onCvsChange={setCvs}
           userId={session?.user.id}
@@ -668,6 +692,7 @@ export default function App() {
           userProfile={userProfile}
           projects={projects}
           experiences={experiences}
+          articles={articles}
           cvs={cvs}
           onBackToDashboard={session ? () => {
             setCurrentPage('dashboard');

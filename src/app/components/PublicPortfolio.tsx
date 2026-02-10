@@ -11,10 +11,13 @@ import {
   Youtube,
   Link as LinkIcon,
   Download,
+  Menu,
   ExternalLink,
   Briefcase,
   Calendar,
   Award,
+  BookOpen,
+  Users,
   X,
 } from 'lucide-react';
 import { ImageWithFallback } from './figma/ImageWithFallback';
@@ -26,7 +29,7 @@ import {
   DialogTitle,
 } from './ui/dialog';
 import { useLocale } from '../i18n';
-import type { CV, Experience, FeaturedVideo, Project, UserProfile, UserTheme } from '../types';
+import type { CV, EducationItem, Experience, FeaturedVideo, Project, ScientificArticle, UserProfile, UserTheme } from '../types';
 
 type LanguageStyle = {
   backgroundColor: string;
@@ -52,6 +55,7 @@ interface PublicPortfolioProps {
   userProfile?: UserProfile;
   projects?: Project[];
   experiences?: Experience[];
+  articles?: ScientificArticle[];
   cvs?: CV[];
   onBackToDashboard?: () => void;
   previewMode?: boolean;
@@ -78,11 +82,30 @@ const resolveMediaEmbed = (url?: string): MediaEmbed | null => {
   return null;
 };
 
+const formatEducationTimeline = (item?: EducationItem): string => {
+  if (!item) {
+    return '';
+  }
+  const start = item.startYear?.trim() ?? '';
+  const end = item.endYear?.trim() ?? '';
+  if (start && end) {
+    return `${start} - ${end}`;
+  }
+  if (start) {
+    return start;
+  }
+  if (end) {
+    return end;
+  }
+  return item.period ?? '';
+};
+
 const cvLabels: Record<CV['language'], {
   title: string;
   summary: string;
   experience: string;
   projects: string;
+  articles: string;
   education: string;
   skills: string;
   contact: string;
@@ -92,6 +115,7 @@ const cvLabels: Record<CV['language'], {
     summary: 'Resumo Profissional',
     experience: 'Experiência',
     projects: 'Projetos',
+    articles: 'Artigos Cientificos',
     education: 'Formação',
     skills: 'Habilidades',
     contact: 'Contato',
@@ -101,6 +125,7 @@ const cvLabels: Record<CV['language'], {
     summary: 'Professional Summary',
     experience: 'Experience',
     projects: 'Projects',
+    articles: 'Scientific Articles',
     education: 'Education',
     skills: 'Skills',
     contact: 'Contact',
@@ -110,6 +135,7 @@ const cvLabels: Record<CV['language'], {
     summary: 'Resumen Profesional',
     experience: 'Experiencia',
     projects: 'Proyectos',
+    articles: 'Articulos Cientificos',
     education: 'Formación',
     skills: 'Habilidades',
     contact: 'Contacto',
@@ -122,6 +148,7 @@ export function PublicPortfolio({
   userProfile,
   projects = [],
   experiences = [],
+  articles = [],
   cvs = [],
   onBackToDashboard,
   previewMode = false,
@@ -132,6 +159,12 @@ export function PublicPortfolio({
   const [portfolioTranslations, setPortfolioTranslations] = useState<Record<string, string>>({});
   const [cvTranslations, setCvTranslations] = useState<Record<string, string>>({});
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  useEffect(() => {
+    if (previewMode) {
+      setMobileNavOpen(false);
+    }
+  }, [previewMode]);
   const configuredTranslateEndpoint = (import.meta.env.VITE_TRANSLATE_ENDPOINT ?? '').trim();
   const translateEndpoint = configuredTranslateEndpoint || '/api/translate';
   const rawTranslateFlag = import.meta.env.VITE_ENABLE_TRANSLATIONS ?? '';
@@ -157,6 +190,13 @@ export function PublicPortfolio({
       }
     : undefined;
 
+  const handleNavLinkClick = (event: MouseEvent<HTMLElement>) => {
+    if (preventPreviewClick) {
+      preventPreviewClick(event);
+    }
+    setMobileNavOpen(false);
+  };
+
   let pageBackground = themeMode === 'dark' ? '#0f0b1f' : backgroundColor || '#ffffff';
   let pageTextColor = themeMode === 'dark' ? '#f7f3ff' : '#1a1534';
   let navBackground = themeMode === 'dark' ? 'rgba(12, 9, 24, 0.9)' : '#ffffffee';
@@ -180,19 +220,19 @@ export function PublicPortfolio({
     borderColor: 'transparent',
     opacity: 1,
   };
-  let navWrapperClass = 'max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between gap-6';
+  let navWrapperClass = 'max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between';
   let navLinksClass = 'hidden md:flex items-center gap-6 text-sm';
   let navLanguageGroupClass = 'hidden md:flex items-center gap-2 text-xs';
   let navNameClass = 'font-semibold tracking-wide';
-  let navNameContainerClass = 'flex items-center gap-3';
+  let navNameContainerClass = 'flex flex-col sm:flex-row sm:items-center gap-3';
 
   let heroSectionBackground = themeMode === 'dark'
     ? `linear-gradient(135deg, ${primaryColor}, #120d26)`
     : `linear-gradient(135deg, ${primaryColor}, ${accentColor})`;
   let heroContainerClass = 'max-w-6xl mx-auto relative z-10 grid md:grid-cols-[1.15fr_0.85fr] gap-12 items-center';
   let heroTextAlignmentClass = 'text-white';
-  let heroButtonGroupClass = 'flex flex-wrap gap-4 mb-10';
-  let heroMetaAlignmentClass = 'flex flex-wrap items-center gap-3 text-sm';
+  let heroButtonGroupClass = 'flex flex-wrap gap-4 mb-10 justify-center md:justify-start';
+  let heroMetaAlignmentClass = 'flex flex-wrap items-center justify-center gap-3 text-sm md:justify-start';
   let heroHeadingColor = '#ffffff';
   let heroParagraphColor = 'rgba(255, 255, 255, 0.82)';
   let heroKickerColor = 'rgba(255, 255, 255, 0.7)';
@@ -258,11 +298,11 @@ export function PublicPortfolio({
       navBackground = themeMode === 'dark' ? 'rgba(10, 6, 22, 0.85)' : '#ffffff';
       navBorderColor = themeMode === 'dark' ? 'rgba(232,227,240,0.1)' : 'rgba(45,37,80,0.08)';
       navTextColor = themeMode === 'dark' ? '#f7f3ff' : '#1a1534';
-      navWrapperClass = 'max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex items-center justify-between gap-4';
+      navWrapperClass = 'max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between';
       navLinksClass = 'hidden md:flex items-center gap-8 text-xs font-semibold uppercase tracking-[0.35em]';
       navLanguageGroupClass = 'hidden md:flex items-center gap-2 text-[11px] uppercase tracking-[0.35em] font-medium';
       navNameClass = 'font-semibold tracking-[0.45em] uppercase text-xs';
-      navNameContainerClass = 'flex items-center gap-3 uppercase tracking-[0.2em]';
+      navNameContainerClass = 'flex flex-col sm:flex-row sm:items-center gap-3 uppercase tracking-[0.2em]';
       navLanguageActiveStyle = {
         backgroundColor: themeMode === 'dark' ? 'rgba(247,243,255,0.15)' : `${primaryColor}12`,
         color: navTextColor,
@@ -346,11 +386,11 @@ export function PublicPortfolio({
       break;
     }
     case 'list': {
-      navWrapperClass = 'max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex flex-wrap md:flex-nowrap items-center justify-between gap-4';
+      navWrapperClass = 'max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between';
       navLinksClass = 'hidden md:flex items-center gap-6 text-sm font-semibold';
       navLanguageGroupClass = 'flex items-center gap-2 text-xs font-medium';
       navNameClass = 'font-semibold text-lg tracking-tight';
-      navNameContainerClass = 'flex items-center gap-3 order-1';
+      navNameContainerClass = 'flex flex-col sm:flex-row sm:items-center gap-3 order-1';
       navBackButtonStyle = {
         backgroundColor: themeMode === 'dark' ? 'rgba(255,255,255,0.08)' : `${primaryColor}12`,
         color: navTextColor,
@@ -358,8 +398,8 @@ export function PublicPortfolio({
         opacity: 1,
       };
       heroContainerClass = 'max-w-6xl mx-auto relative z-10 flex flex-col md:flex-row gap-12 items-center';
-      heroButtonGroupClass = 'flex flex-wrap gap-3 mb-8';
-      heroMetaAlignmentClass = 'flex flex-wrap items-center gap-2 text-sm';
+      heroButtonGroupClass = 'flex flex-wrap gap-3 mb-8 justify-center md:justify-start';
+      heroMetaAlignmentClass = 'flex flex-wrap items-center justify-center gap-2 text-sm md:justify-start';
       heroParagraphColor = themeMode === 'dark' ? 'rgba(247,243,255,0.82)' : '#4d415a';
       heroSecondaryButtonStyle = {
         border: `1px solid ${themeMode === 'dark' ? 'rgba(247,243,255,0.18)' : `${secondaryColor}25`}`,
@@ -402,11 +442,11 @@ export function PublicPortfolio({
       navBackground = themeMode === 'dark' ? 'rgba(5,3,12,0.95)' : 'rgba(12,9,24,0.65)';
       navBorderColor = 'rgba(255,255,255,0.15)';
       navTextColor = '#ffffff';
-      navWrapperClass = 'max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex items-center justify-between gap-6 uppercase tracking-[0.25em]';
+      navWrapperClass = 'max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between uppercase tracking-[0.25em]';
       navLinksClass = 'hidden md:flex items-center gap-5 text-[11px] font-semibold uppercase tracking-[0.35em]';
       navLanguageGroupClass = 'hidden md:flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.35em]';
       navNameClass = 'font-semibold uppercase tracking-[0.45em]';
-      navNameContainerClass = 'flex items-center gap-3 uppercase tracking-[0.25em]';
+      navNameContainerClass = 'flex flex-col sm:flex-row sm:items-center gap-3 uppercase tracking-[0.25em]';
       navLanguageActiveStyle = {
         backgroundColor: 'rgba(255,255,255,0.16)',
         color: '#ffffff',
@@ -461,10 +501,10 @@ export function PublicPortfolio({
       navBorderColor = themeMode === 'dark' ? 'rgba(232,227,240,0.12)' : 'rgba(28,21,56,0.12)';
       navTextColor = themeMode === 'dark' ? '#f7f3ff' : '#1c1538';
       navWrapperClass = 'max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4';
-      navLinksClass = 'flex flex-wrap justify-center md:justify-end items-center gap-6 text-xs font-semibold uppercase tracking-[0.4em]';
+      navLinksClass = 'hidden md:flex md:justify-end items-center gap-6 text-xs font-semibold uppercase tracking-[0.4em]';
       navLanguageGroupClass = 'flex items-center gap-2 text-[11px] uppercase tracking-[0.35em]';
       navNameClass = 'font-semibold uppercase tracking-[0.4em] text-sm';
-      navNameContainerClass = 'flex items-center justify-between w-full md:w-auto gap-3';
+      navNameContainerClass = 'flex flex-col sm:flex-row sm:items-center justify-between w-full md:w-auto gap-3';
       navLanguageActiveStyle = {
         backgroundColor: themeMode === 'dark' ? 'rgba(247,243,255,0.2)' : 'rgba(28,21,56,0.12)',
         color: navTextColor,
@@ -551,7 +591,7 @@ export function PublicPortfolio({
       navLinksClass = 'hidden md:flex items-center gap-7 text-sm font-semibold uppercase tracking-[0.3em]';
       navLanguageGroupClass = 'hidden md:flex items-center gap-2 text-[11px] uppercase tracking-[0.3em]';
       navNameClass = 'font-semibold uppercase tracking-[0.35em] text-sm';
-      navNameContainerClass = 'flex items-center gap-3 uppercase tracking-[0.25em]';
+      navNameContainerClass = 'flex flex-col sm:flex-row sm:items-center gap-3 uppercase tracking-[0.25em]';
       navLanguageActiveStyle = {
         backgroundColor: themeMode === 'dark' ? 'rgba(247,243,255,0.18)' : 'rgba(28,21,56,0.12)',
         color: navTextColor,
@@ -676,6 +716,7 @@ export function PublicPortfolio({
   type ProfileTranslationField = 'title' | 'bio';
   type ProjectTranslationField = 'title' | 'description' | 'category';
   type ExperienceTranslationField = 'title' | 'company' | 'description';
+  type ArticleTranslationField = 'title' | 'summary' | 'publication';
 
   const getTranslationMapForLanguage = (language: CV['language']) => {
     if (language === 'pt') {
@@ -770,6 +811,38 @@ export function PublicPortfolio({
     return baseValue;
   };
 
+  const getTranslatedArticle = (
+    article: ScientificArticle,
+    field: ArticleTranslationField,
+    language: CV['language'] = locale as CV['language'],
+  ) => {
+    const baseValue = field === 'title'
+      ? article.title
+      : field === 'summary'
+        ? article.summary ?? ''
+        : article.publication ?? '';
+
+    if (language === 'pt') {
+      return baseValue;
+    }
+
+    const directValue = article.translations?.[language]?.[field];
+    if (directValue && directValue.trim().length > 0) {
+      return directValue;
+    }
+
+    const translationMap = getTranslationMapForLanguage(language);
+    if (translationMap) {
+      const key = `article.${article.id}.${field}`;
+      const translated = translationMap[key];
+      if (translated && translated.trim().length > 0) {
+        return translated;
+      }
+    }
+
+    return baseValue;
+  };
+
   const fallbackProjects: Project[] = [];
   const fallbackExperiences: Experience[] = [];
   const fallbackEducation: UserProfile['education'] = [];
@@ -781,6 +854,14 @@ export function PublicPortfolio({
   const experiencesToShow = useMemo(
     () => (experiences.length > 0 ? experiences : fallbackExperiences),
     [experiences],
+  );
+  const articlesToShow = useMemo(
+    () => articles.filter((article) => article.showInPortfolio !== false),
+    [articles],
+  );
+  const cvArticles = useMemo(
+    () => articles.filter((article) => article.showInCv !== false),
+    [articles],
   );
   const profileSkills = useMemo(
     () => (resolvedProfile.skills.length ? resolvedProfile.skills : []),
@@ -834,54 +915,56 @@ export function PublicPortfolio({
     }
   }, [availableCvLanguages, cvLanguage]);
 
-  const textItems = useMemo(() => {
+  const translatableItems = useMemo(() => {
     const items: Array<{ key: string; text: string }> = [];
+    const seen = new Set<string>();
+    const pushItem = (key: string, text?: string | null) => {
+      const trimmed = typeof text === 'string' ? text.trim() : '';
+      if (!trimmed || seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      items.push({ key, text: trimmed });
+    };
 
-    if (resolvedProfile.title) {
-      items.push({ key: 'profile.title', text: resolvedProfile.title });
-    }
-    if (resolvedProfile.bio) {
-      items.push({ key: 'profile.bio', text: resolvedProfile.bio });
-    }
+    pushItem('profile.title', resolvedProfile.title);
+    pushItem('profile.bio', resolvedProfile.bio);
 
     projectsToShow.forEach((project) => {
-      items.push({ key: `project.${project.id}.title`, text: project.title });
-      items.push({ key: `project.${project.id}.description`, text: project.description });
-      if (project.category) {
-        items.push({ key: `project.${project.id}.category`, text: project.category });
-      }
-      if (project.company) {
-        items.push({ key: `project.${project.id}.company`, text: project.company });
-      }
-      if (project.results) {
-        items.push({ key: `project.${project.id}.results`, text: project.results });
-      }
+      pushItem(`project.${project.id}.title`, project.title);
+      pushItem(`project.${project.id}.description`, project.description);
+      pushItem(`project.${project.id}.category`, project.category);
+      pushItem(`project.${project.id}.company`, project.company);
+      pushItem(`project.${project.id}.results`, project.results);
     });
 
     experiencesToShow.forEach((exp) => {
-      items.push({ key: `experience.${exp.id}.title`, text: exp.title });
-      items.push({ key: `experience.${exp.id}.company`, text: exp.company });
-      items.push({ key: `experience.${exp.id}.description`, text: exp.description });
+      pushItem(`experience.${exp.id}.title`, exp.title);
+      pushItem(`experience.${exp.id}.company`, exp.company);
+      pushItem(`experience.${exp.id}.description`, exp.description);
     });
 
     educationToShow.forEach((edu, index) => {
-      items.push({ key: `education.${index}.degree`, text: edu.degree });
-      items.push({ key: `education.${index}.institution`, text: edu.institution });
-      if (edu.description) {
-        items.push({ key: `education.${index}.description`, text: edu.description });
-      }
+      pushItem(`education.${index}.degree`, edu.degree);
+      pushItem(`education.${index}.institution`, edu.institution);
+      pushItem(`education.${index}.description`, edu.description);
     });
 
-    return items.filter((item) => item.text.trim().length > 0);
-  }, [educationToShow, experiencesToShow, projectsToShow, resolvedProfile.bio, resolvedProfile.title]);
+    const articlePool = new Map<string, ScientificArticle>();
+    articlesToShow.forEach((article) => articlePool.set(article.id, article));
+    cvArticles.forEach((article) => articlePool.set(article.id, article));
+
+    articlePool.forEach((article) => {
+      pushItem(`article.${article.id}.title`, article.title);
+      pushItem(`article.${article.id}.summary`, article.summary);
+      pushItem(`article.${article.id}.publication`, article.publication);
+    });
+
+    return items;
+  }, [articlesToShow, cvArticles, educationToShow, experiencesToShow, projectsToShow, resolvedProfile.bio, resolvedProfile.title]);
 
   useEffect(() => {
-    if (textItems.length === 0) {
-      setPortfolioTranslations({});
-      return;
-    }
-
-    if (locale === 'pt') {
+    if (translatableItems.length === 0) {
       setPortfolioTranslations({});
       return;
     }
@@ -905,7 +988,7 @@ export function PublicPortfolio({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             target: locale,
-            texts: textItems.map((item) => item.text),
+            texts: translatableItems.map((item) => item.text),
           }),
           signal: controller.signal,
         });
@@ -922,7 +1005,7 @@ export function PublicPortfolio({
         const mapped: Record<string, string> = {};
         const results = Array.isArray(payload.translations) ? payload.translations : [];
         results.forEach((value, index) => {
-          const key = textItems[index]?.key;
+          const key = translatableItems[index]?.key;
           if (key && typeof value === 'string' && value.trim().length > 0) {
             mapped[key] = value;
           }
@@ -942,10 +1025,10 @@ export function PublicPortfolio({
       cancelled = true;
       controller.abort();
     };
-  }, [locale, textItems, translateEnabled, translateEndpoint]);
+  }, [locale, translatableItems, translateEnabled, translateEndpoint]);
 
   useEffect(() => {
-    if (textItems.length === 0) {
+    if (translatableItems.length === 0) {
       setCvTranslations({});
       return;
     }
@@ -979,7 +1062,7 @@ export function PublicPortfolio({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             target: cvLanguage,
-            texts: textItems.map((item) => item.text),
+            texts: translatableItems.map((item) => item.text),
           }),
           signal: controller.signal,
         });
@@ -996,7 +1079,7 @@ export function PublicPortfolio({
         const mapped: Record<string, string> = {};
         const results = Array.isArray(payload.translations) ? payload.translations : [];
         results.forEach((value, index) => {
-          const key = textItems[index]?.key;
+          const key = translatableItems[index]?.key;
           if (key && typeof value === 'string' && value.trim().length > 0) {
             mapped[key] = value;
           }
@@ -1016,7 +1099,7 @@ export function PublicPortfolio({
       cancelled = true;
       controller.abort();
     };
-  }, [cvLanguage, locale, portfolioTranslations, textItems, translateEnabled, translateEndpoint]);
+  }, [cvLanguage, locale, portfolioTranslations, translatableItems, translateEnabled, translateEndpoint]);
 
   const translateForLocale = (key: string, fallback: string) => {
     if (locale === 'pt') {
@@ -1174,6 +1257,17 @@ export function PublicPortfolio({
     }
   })();
 
+  const navItems = [
+    { href: '#about', label: t('public.nav.about') },
+    { href: '#education', label: t('public.nav.education') },
+    ...(articlesToShow.length > 0
+      ? [{ href: '#articles', label: t('public.nav.articles') }]
+      : []),
+    { href: '#projects', label: t('public.nav.projects') },
+    { href: '#experience', label: t('public.nav.experience') },
+    { href: '#contact', label: t('public.nav.contact') },
+  ];
+
   const rootClassName = previewMode ? 'w-full' : 'min-h-screen';
 
   return (
@@ -1183,93 +1277,140 @@ export function PublicPortfolio({
         style={{ background: navBackground, borderColor: navBorderColor }}
       >
         <div className={navWrapperClass} style={{ color: navTextColor }}>
-          <div className={navNameContainerClass}>
-            {onBackToDashboard && (
+          <div className="flex w-full items-center justify-between gap-3">
+            <div className={`${navNameContainerClass} flex-1 sm:flex-none`}>
+              {onBackToDashboard && (
+                <button
+                  onClick={previewMode ? undefined : onBackToDashboard}
+                  className="px-2 py-1 md:px-3 md:py-1.5 rounded transition-all flex items-center gap-1 text-xs md:text-sm"
+                  style={{
+                    backgroundColor: navBackButtonStyle.backgroundColor,
+                    color: navBackButtonStyle.color,
+                    borderColor: navBackButtonStyle.borderColor,
+                    opacity: navBackButtonStyle.opacity,
+                  }}
+                >
+                  ← Dashboard
+                </button>
+              )}
+              <div className={navNameClass}>{resolvedProfile.name}</div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <nav className={navLinksClass}>
+                {navItems.map((item) => (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    className="hover:opacity-80 transition-opacity"
+                    style={{ color: navTextColor }}
+                    onClick={preventPreviewClick}
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </nav>
+
+              <div className={navLanguageGroupClass}>
+                {(['pt', 'en', 'es'] as const).map((lang) => (
+                  <button
+                    key={lang}
+                    onClick={previewMode ? undefined : () => setLocale(lang)}
+                    className="px-2 py-1 rounded transition-all"
+                    disabled={previewMode}
+                    style={{
+                      backgroundColor: locale === lang
+                        ? navLanguageActiveStyle.backgroundColor
+                        : navLanguageInactiveStyle.backgroundColor,
+                      color: locale === lang
+                        ? navLanguageActiveStyle.color
+                        : navLanguageInactiveStyle.color,
+                      borderColor: locale === lang
+                        ? navLanguageActiveStyle.borderColor
+                        : navLanguageInactiveStyle.borderColor,
+                      opacity: locale === lang
+                        ? navLanguageActiveStyle.opacity
+                        : navLanguageInactiveStyle.opacity,
+                    }}
+                  >
+                    {lang.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+
               <button
-                onClick={previewMode ? undefined : onBackToDashboard}
-                className="px-2 py-1 md:px-3 md:py-1.5 rounded transition-all flex items-center gap-1 text-xs md:text-sm"
+                type="button"
+                className="inline-flex items-center justify-center rounded-md border px-3 py-2 md:hidden"
                 style={{
-                  backgroundColor: navBackButtonStyle.backgroundColor,
-                  color: navBackButtonStyle.color,
-                  borderColor: navBackButtonStyle.borderColor,
-                  opacity: navBackButtonStyle.opacity,
+                  borderColor: navBorderColor,
+                  color: navTextColor,
+                  backgroundColor: themeMode === 'dark' ? 'rgba(15,11,31,0.9)' : '#ffffff',
                 }}
-              >
-                ← Dashboard
-              </button>
-            )}
-            <div className={navNameClass}>{resolvedProfile.name}</div>
-          </div>
-
-          <nav className={navLinksClass}>
-            <a
-              href="#about"
-              className="hover:opacity-80 transition-opacity"
-              style={{ color: navTextColor }}
-              onClick={preventPreviewClick}
-            >
-              {t('public.nav.about')}
-            </a>
-            <a
-              href="#education"
-              className="hover:opacity-80 transition-opacity"
-              style={{ color: navTextColor }}
-              onClick={preventPreviewClick}
-            >
-              {t('public.nav.education')}
-            </a>
-            <a
-              href="#projects"
-              className="hover:opacity-80 transition-opacity"
-              style={{ color: navTextColor }}
-              onClick={preventPreviewClick}
-            >
-              {t('public.nav.projects')}
-            </a>
-            <a
-              href="#experience"
-              className="hover:opacity-80 transition-opacity"
-              style={{ color: navTextColor }}
-              onClick={preventPreviewClick}
-            >
-              {t('public.nav.experience')}
-            </a>
-            <a
-              href="#contact"
-              className="hover:opacity-80 transition-opacity"
-              style={{ color: navTextColor }}
-              onClick={preventPreviewClick}
-            >
-              {t('public.nav.contact')}
-            </a>
-          </nav>
-
-          <div className={navLanguageGroupClass}>
-            {(['pt', 'en', 'es'] as const).map((lang) => (
-              <button
-                key={lang}
-                onClick={previewMode ? undefined : () => setLocale(lang)}
-                className="px-2 py-1 rounded transition-all"
+                onClick={previewMode ? undefined : () => setMobileNavOpen((open) => !open)}
                 disabled={previewMode}
-                style={{
-                  backgroundColor: locale === lang
-                    ? navLanguageActiveStyle.backgroundColor
-                    : navLanguageInactiveStyle.backgroundColor,
-                  color: locale === lang
-                    ? navLanguageActiveStyle.color
-                    : navLanguageInactiveStyle.color,
-                  borderColor: locale === lang
-                    ? navLanguageActiveStyle.borderColor
-                    : navLanguageInactiveStyle.borderColor,
-                  opacity: locale === lang
-                    ? navLanguageActiveStyle.opacity
-                    : navLanguageInactiveStyle.opacity,
-                }}
+                aria-expanded={mobileNavOpen}
+                aria-label={mobileNavOpen ? 'Fechar menu' : 'Abrir menu'}
               >
-                {lang.toUpperCase()}
+                {mobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
               </button>
-            ))}
+            </div>
           </div>
+
+          {!previewMode && mobileNavOpen ? (
+            <div
+              className="flex w-full flex-col gap-4 rounded-lg border px-4 py-4 md:hidden"
+              style={{
+                borderColor: navBorderColor,
+                background: themeMode === 'dark' ? 'rgba(12, 9, 24, 0.96)' : '#ffffff',
+              }}
+            >
+              <nav className="flex flex-col gap-3 text-sm">
+                {navItems.map((item) => (
+                  <a
+                    key={`mobile-${item.href}`}
+                    href={item.href}
+                    className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 transition-opacity hover:opacity-80"
+                    style={{ color: navTextColor }}
+                    onClick={handleNavLinkClick}
+                  >
+                    <span>{item.label}</span>
+                    <ExternalLink className="h-4 w-4 opacity-60" />
+                  </a>
+                ))}
+              </nav>
+              <div className="flex flex-wrap gap-2">
+                {(['pt', 'en', 'es'] as const).map((lang) => (
+                  <button
+                    key={`mobile-lang-${lang}`}
+                    onClick={() => {
+                      if (previewMode) {
+                        return;
+                      }
+                      setLocale(lang);
+                      setMobileNavOpen(false);
+                    }}
+                    className="px-3 py-1.5 rounded-md text-xs font-semibold transition-all"
+                    style={{
+                      backgroundColor: locale === lang
+                        ? navLanguageActiveStyle.backgroundColor
+                        : navLanguageInactiveStyle.backgroundColor,
+                      color: locale === lang
+                        ? navLanguageActiveStyle.color
+                        : navLanguageInactiveStyle.color,
+                      borderColor: locale === lang
+                        ? navLanguageActiveStyle.borderColor
+                        : navLanguageInactiveStyle.borderColor,
+                      opacity: locale === lang
+                        ? navLanguageActiveStyle.opacity
+                        : navLanguageInactiveStyle.opacity,
+                    }}
+                  >
+                    {lang.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
       </header>
 
@@ -1297,17 +1438,17 @@ export function PublicPortfolio({
             <p className="text-sm uppercase tracking-[0.3em] mb-4" style={{ color: heroKickerColor }}>
               {t('public.badge')}
             </p>
-            <h1 className="text-5xl lg:text-6xl font-bold mb-4" style={{ color: heroHeadingColor }}>
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold mb-4" style={{ color: heroHeadingColor }}>
               {resolvedProfile.name}
             </h1>
             <p
-              className="text-2xl lg:text-3xl bg-clip-text text-transparent mb-6"
+              className="text-xl md:text-2xl lg:text-3xl bg-clip-text text-transparent mb-6"
               style={{ backgroundImage: `linear-gradient(90deg, ${accentColor}, ${primaryColor})` }}
             >
               {getTranslatedField('title')}
             </p>
             {heroBio && (
-              <p className="text-lg leading-relaxed mb-8" style={{ color: heroParagraphColor }}>
+              <p className="text-base md:text-lg leading-relaxed mb-8" style={{ color: heroParagraphColor }}>
                 {heroBio}
               </p>
             )}
@@ -1761,26 +1902,142 @@ export function PublicPortfolio({
             </div>
 
             <div className="space-y-6">
-              {educationToShow.map((edu, index) => (
-                <div key={`${edu.institution}-${index}`} className="bg-white rounded-xl p-6 border shadow-sm" style={{ borderColor: `${secondaryColor}20` }}>
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h3 className="text-xl font-bold text-[#1a1534] mb-1">
-                        {translateForLocale(`education.${index}.degree`, edu.degree)}
-                      </h3>
-                      <p className="text-sm font-medium" style={{ color: accentColor }}>
-                        {translateForLocale(`education.${index}.institution`, edu.institution)}
-                      </p>
+              {educationToShow.map((edu, index) => {
+                const timeline = formatEducationTimeline(edu);
+                return (
+                  <div key={`${edu.institution}-${index}`} className="bg-white rounded-xl p-6 border shadow-sm" style={{ borderColor: `${secondaryColor}20` }}>
+                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+                      <div>
+                        <h3 className="text-xl font-bold text-[#1a1534] mb-1">
+                          {translateForLocale(`education.${index}.degree`, edu.degree)}
+                        </h3>
+                        <p className="text-sm font-medium" style={{ color: accentColor }}>
+                          {translateForLocale(`education.${index}.institution`, edu.institution)}
+                        </p>
+                      </div>
+                      {timeline ? (
+                        <span className="text-sm" style={{ color: secondaryColor }}>{timeline}</span>
+                      ) : null}
                     </div>
-                    <span className="text-sm" style={{ color: secondaryColor }}>{edu.period}</span>
+                    {edu.description && (
+                      <p className="text-sm mt-3" style={{ color: sectionBodyColor }}>
+                        {translateForLocale(`education.${index}.description`, edu.description)}
+                      </p>
+                    )}
                   </div>
-                  {edu.description && (
-                    <p className="text-sm mt-3" style={{ color: secondaryColor }}>
-                      {translateForLocale(`education.${index}.description`, edu.description)}
-                    </p>
-                  )}
-                </div>
-              ))}
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
+
+      {articlesToShow.length > 0 && (
+        <section id="articles" className="py-20 px-4 sm:px-6 lg:px-8">
+          <div className="max-w-5xl mx-auto">
+            <div className="text-center mb-12">
+              <h2 className="text-4xl font-bold text-[#1a1534] mb-4">{t('public.articles.title')}</h2>
+              <p className="text-lg" style={{ color: secondaryColor }}>{t('public.articles.subtitle')}</p>
+            </div>
+
+            <div className="space-y-6">
+              {articlesToShow.map((article) => {
+                const title = getTranslatedArticle(article, 'title');
+                const summary = getTranslatedArticle(article, 'summary');
+                const summaryText = summary.trim();
+                const publication = getTranslatedArticle(article, 'publication');
+                const authors = (article.authors ?? []).map((author) => author.trim()).filter(Boolean);
+                const doiText = article.doi?.trim() ?? '';
+                const doiUrl = doiText
+                  ? doiText.startsWith('http://') || doiText.startsWith('https://')
+                    ? doiText
+                    : `https://doi.org/${doiText}`
+                  : undefined;
+
+                return (
+                  <article
+                    key={article.id}
+                    className="rounded-2xl border p-6 shadow-sm transition-transform duration-200 hover:-translate-y-1"
+                    style={{ backgroundColor: surfaceBackground, borderColor: surfaceBorderColor }}
+                  >
+                    <div className="flex flex-col gap-4">
+                      <div className="flex flex-col gap-2">
+                        <h3 className="text-2xl font-semibold" style={{ color: sectionTitleColor }}>
+                          {title}
+                        </h3>
+                        <div
+                          className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm"
+                          style={{ color: sectionBodyColor }}
+                        >
+                          {publication && (
+                            <span className="inline-flex items-center gap-2">
+                              <BookOpen className="w-4 h-4" style={{ color: accentColor }} />
+                              <span>
+                                {t('public.articles.publication')}: {publication}
+                              </span>
+                            </span>
+                          )}
+                          {article.publicationDate && (
+                            <span className="inline-flex items-center gap-2">
+                              <Calendar className="w-4 h-4" style={{ color: accentColor }} />
+                              <span>
+                                {t('public.articles.year')}: {article.publicationDate}
+                              </span>
+                            </span>
+                          )}
+                          {authors.length > 0 && (
+                            <span className="inline-flex items-center gap-2">
+                              <Users className="w-4 h-4" style={{ color: accentColor }} />
+                              <span>
+                                {t('public.articles.authors')}: {authors.join(', ')}
+                              </span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {summaryText.length > 0 && (
+                        <p className="text-sm leading-relaxed" style={{ color: sectionBodyColor }}>
+                          {summaryText}
+                        </p>
+                      )}
+
+                      {(article.link || doiUrl) && (
+                        <div className="flex flex-wrap items-center gap-4 pt-2 text-sm">
+                          {article.link && (
+                            <a
+                              href={article.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-2 font-semibold"
+                              style={{ color: accentColor }}
+                              onClick={preventPreviewClick}
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                              {t('public.articles.readMore')}
+                            </a>
+                          )}
+                          {doiUrl && (
+                            <a
+                              href={doiUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-2"
+                              style={{ color: secondaryColor }}
+                              onClick={preventPreviewClick}
+                            >
+                              <LinkIcon className="w-4 h-4" />
+                              <span>
+                                {t('public.articles.doi')}: {doiText}
+                              </span>
+                            </a>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </div>
         </section>
@@ -2354,15 +2611,52 @@ export function PublicPortfolio({
           </div>
         )}
 
+        {cvArticles.length > 0 && (
+          <div className="section">
+            <h2>{cvLabels[cvLanguage].articles}</h2>
+            <ul>
+              {cvArticles.map((article) => {
+                const title = getTranslatedArticle(article, 'title', cvLanguage);
+                const summary = getTranslatedArticle(article, 'summary', cvLanguage);
+                const publication = getTranslatedArticle(article, 'publication', cvLanguage);
+                const metadata: string[] = [];
+                if (Array.isArray(article.authors) && article.authors.length > 0) {
+                  metadata.push(article.authors.join(', '));
+                }
+                if (publication) {
+                  metadata.push(publication);
+                }
+                if (article.publicationDate) {
+                  metadata.push(article.publicationDate);
+                }
+
+                return (
+                  <li key={article.id}>
+                    <strong>{title}</strong>
+                    {metadata.length > 0 ? ` · ${metadata.join(' • ')}` : ''}
+                    {summary ? ` — ${summary}` : ''}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
         {educationToShow.length > 0 && (
           <div className="section">
             <h2>{cvLabels[cvLanguage].education}</h2>
             <ul>
-              {educationToShow.map((edu, index) => (
-                <li key={`${edu.institution}-${index}`}>
-                  <strong>{translateForCv(`education.${index}.degree`, edu.degree)}</strong> · {translateForCv(`education.${index}.institution`, edu.institution)} ({edu.period})
-                </li>
-              ))}
+              {educationToShow.map((edu, index) => {
+                const timeline = formatEducationTimeline(edu);
+                const degree = translateForCv(`education.${index}.degree`, edu.degree);
+                const institution = translateForCv(`education.${index}.institution`, edu.institution);
+                return (
+                  <li key={`${edu.institution}-${index}`}>
+                    <strong>{degree}</strong> · {institution}
+                    {timeline ? ` (${timeline})` : ''}
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}

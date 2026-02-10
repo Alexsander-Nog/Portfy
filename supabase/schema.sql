@@ -91,6 +91,25 @@ create table if not exists public.cvs (
   language text not null check (language in ('pt', 'en', 'es')),
   selected_projects text[] not null default '{}',
   selected_experiences text[] not null default '{}',
+  selected_articles text[] not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.articles (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references auth.users on delete cascade,
+  title text not null,
+  publication text,
+  publication_date text,
+  summary text,
+  link text,
+  doi text,
+  authors text[] not null default '{}',
+  show_in_portfolio boolean not null default true,
+  show_in_cv boolean not null default true,
+  position integer,
+  translations jsonb default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -114,6 +133,7 @@ alter table public.featured_videos enable row level security;
 alter table public.projects enable row level security;
 alter table public.experiences enable row level security;
 alter table public.cvs enable row level security;
+alter table public.articles enable row level security;
 alter table public.subscriptions enable row level security;
 
 create policy "profiles_read_own" on public.profiles
@@ -172,6 +192,15 @@ create policy "experiences_update_own" on public.experiences
 create policy "experiences_delete_own" on public.experiences
   for delete using (auth.uid() = user_id);
 
+create policy "articles_read_own" on public.articles
+  for select using (auth.uid() = user_id);
+create policy "articles_write_own" on public.articles
+  for insert with check (auth.uid() = user_id);
+create policy "articles_update_own" on public.articles
+  for update using (auth.uid() = user_id);
+create policy "articles_delete_own" on public.articles
+  for delete using (auth.uid() = user_id);
+
 alter table public.experiences
   add column if not exists show_certificate boolean not null default true;
 
@@ -183,4 +212,10 @@ create policy "cvs_update_own" on public.cvs
   for update using (auth.uid() = user_id);
 create policy "cvs_delete_own" on public.cvs
 
-  for delete using (auth.uid() = user_id);omo
+  for delete using (auth.uid() = user_id);
+
+alter table public.cvs
+  add column if not exists selected_articles text[] not null default '{}';
+
+alter table public.articles
+  add column if not exists translations jsonb default '{}'::jsonb;

@@ -11,7 +11,8 @@ import {
   Settings,
   LogOut,
   Menu,
-  X
+  X,
+  BookOpen,
 } from 'lucide-react';
 import { useLocale } from '../i18n';
 import type { Subscription, UserProfile } from '../types';
@@ -65,6 +66,7 @@ export function DashboardLayout({
     { id: 'dashboard', label: t('menu.dashboard'), icon: LayoutDashboard },
     { id: 'portfolio', label: t('menu.portfolio'), icon: FolderOpen },
     { id: 'projects', label: t('menu.projects'), icon: Briefcase },
+    { id: 'articles', label: t('menu.articles'), icon: BookOpen },
     { id: 'experiences', label: t('menu.experiences'), icon: Briefcase },
     { id: 'cv', label: t('menu.cv'), icon: FileText },
     { id: 'appearance', label: t('menu.appearance'), icon: Palette },

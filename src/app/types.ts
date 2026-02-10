@@ -1,3 +1,30 @@
+export interface ScientificArticleTranslations {
+  en?: {
+    title?: string;
+    summary?: string;
+    publication?: string;
+  };
+  es?: {
+    title?: string;
+    summary?: string;
+    publication?: string;
+  };
+}
+
+export interface ScientificArticle {
+  id: string;
+  title: string;
+  publication?: string;
+  publicationDate?: string;
+  summary?: string;
+  link?: string;
+  doi?: string;
+  authors?: string[];
+  showInPortfolio?: boolean;
+  showInCv?: boolean;
+  position?: number;
+  translations?: ScientificArticleTranslations;
+}
 export type Locale = "pt" | "en" | "es";
 
 export interface UserTheme {
@@ -86,6 +113,7 @@ export interface CV {
   language: "pt" | "en" | "es";
   selectedProjects: string[];
   selectedExperiences: string[];
+  selectedArticles: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -93,7 +121,9 @@ export interface CV {
 export interface EducationItem {
   institution: string;
   degree: string;
-  period: string;
+  startYear?: string;
+  endYear?: string;
+  period?: string;
   description?: string;
 }
 

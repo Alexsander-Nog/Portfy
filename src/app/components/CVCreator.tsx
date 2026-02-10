@@ -13,11 +13,13 @@ import {
   Trash2,
   Loader2,
 } from 'lucide-react';
-import type { CV, Experience, Project, SubscriptionPlan, UserProfile } from '../types';
+import type { CV, EducationItem, Experience, Project, ScientificArticle, SubscriptionPlan, UserProfile } from '../types';
 import { useLocale } from '../i18n';
 import { createCv, deleteCv, updateCv } from '../data/portfolio';
 import { isSupabaseConfigured } from '../../lib/supabaseClient';
 import { PLAN_LIMITS, isLanguageAllowed } from '../data/plans';
+
+type ArticleTranslationField = 'title' | 'summary' | 'publication';
 
 type CvLanguage = CV['language'];
 
@@ -52,6 +54,7 @@ const CV_SECTION_LABELS: Record<CvLanguage, {
   summary: string;
   experience: string;
   projects: string;
+  articles: string;
   skills: string;
   education: string;
   contact: string;
@@ -60,6 +63,7 @@ const CV_SECTION_LABELS: Record<CvLanguage, {
     summary: 'Resumo Profissional',
     experience: 'Experiencia',
     projects: 'Projetos em Destaque',
+    articles: 'Artigos Cientificos',
     skills: 'Habilidades',
     education: 'Formacao',
     contact: 'Contato',
@@ -68,6 +72,7 @@ const CV_SECTION_LABELS: Record<CvLanguage, {
     summary: 'Professional Summary',
     experience: 'Experience',
     projects: 'Highlighted Projects',
+    articles: 'Scientific Articles',
     skills: 'Skills',
     education: 'Education',
     contact: 'Contact',
@@ -76,6 +81,7 @@ const CV_SECTION_LABELS: Record<CvLanguage, {
     summary: 'Resumen Profesional',
     experience: 'Experiencia',
     projects: 'Proyectos Destacados',
+    articles: 'Articulos Cientificos',
     skills: 'Habilidades',
     education: 'Formacion',
     contact: 'Contacto',
@@ -149,6 +155,38 @@ function getExperienceField(
   return fallback;
 }
 
+function getTranslatedArticle(
+  article: ScientificArticle,
+  field: ArticleTranslationField,
+  lang: CvLanguage,
+): string {
+  const fallback = field === 'title'
+    ? article.title
+    : field === 'summary'
+      ? article.summary ?? ''
+      : article.publication ?? '';
+
+  if (lang === 'pt') {
+    return fallback;
+  }
+
+  const directValue = article.translations?.[lang]?.[field];
+  if (directValue && directValue.trim().length > 0) {
+    return directValue;
+  }
+
+  const translationMap = getTranslationMapForLanguage(lang);
+  if (translationMap) {
+    const key = `article.${article.id}.${field}`;
+    const translated = translationMap[key];
+    if (translated && translated.trim().length > 0) {
+      return translated;
+    }
+  }
+
+  return fallback;
+}
+
 function buildContactItems(profile: UserProfile): ContactItem[] {
   const items: ContactItem[] = [];
   if (profile.email) {
@@ -161,6 +199,33 @@ function buildContactItems(profile: UserProfile): ContactItem[] {
     items.push({ icon: <MapPin className="w-4 h-4" />, value: profile.location });
   }
   return items;
+}
+
+function formatEducationTimeline(item?: EducationItem): string {
+  if (!item) {
+    return '';
+  }
+  const start = item.startYear?.trim() ?? '';
+  const end = item.endYear?.trim() ?? '';
+  if (start && end) {
+    return `${start} - ${end}`;
+  }
+  if (start) {
+    return start;
+  }
+  if (end) {
+    return end;
+  }
+  return item.period ?? '';
+}
+
+function formatEducationEntry(item?: EducationItem): string {
+  if (!item) {
+    return '';
+  }
+  const timeline = formatEducationTimeline(item);
+  const segments = [item.degree, item.institution, timeline].filter((segment) => segment && segment.trim().length > 0);
+  return segments.join(' • ');
 }
 
 const templates: TemplateOption[] = [
@@ -177,10 +242,11 @@ interface CVCreatorProps {
   userProfile: UserProfile;
   projects: Project[];
   experiences: Experience[];
+  articles: ScientificArticle[];
   planTier: SubscriptionPlan;
 }
 
-export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, experiences, planTier }: CVCreatorProps) {
+export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, experiences, articles, planTier }: CVCreatorProps) {
   const { locale, t } = useLocale();
   const languageAllowance = PLAN_LIMITS[planTier].allowedCvLanguages;
   const maxCvAllowance = PLAN_LIMITS[planTier].maxCvs;
@@ -199,6 +265,7 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
   });
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
   const [selectedExperienceIds, setSelectedExperienceIds] = useState<string[]>([]);
+  const [selectedArticleIds, setSelectedArticleIds] = useState<string[]>([]);
   const [drafts, setDrafts] = useState<Record<string, CvDraft>>({});
   const [linkCopied, setLinkCopied] = useState(false);
   const [cvSaving, setCvSaving] = useState(false);
@@ -215,15 +282,20 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
     return languageOptions.filter((option) => languageAllowance.includes(option.value));
   }, [languageAllowance]);
 
+  const hasFullLanguageAccess = useMemo(() => (
+    languageAllowance === 'all' ? true : languageAllowance.length >= languageOptions.length
+  ), [languageAllowance]);
+
   const activeCv = activeCvId === NEW_CV_ID ? null : cvs.find((cv) => cv.id === activeCvId) ?? null;
   const activeDraftKey = activeCv ? activeCv.id : NEW_CV_ID;
 
   const createDefaultDraft = useCallback((): CvDraft => ({
     summary: { pt: '', en: '', es: '' },
     skills: (userProfile.skills ?? []).join(', '),
-    education: userProfile.education
+    education: Array.isArray(userProfile.education)
       ? userProfile.education
-          .map((item) => [item.degree, item.institution].filter(Boolean).join(' - '))
+          .map((item) => formatEducationEntry(item))
+          .filter((entry) => entry.length > 0)
           .join('\n')
       : '',
     includePhoto: true,
@@ -256,7 +328,24 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
     });
   }, [activeDraftKey, createDefaultDraft]);
 
+  const resolvePublicCvUrl = useCallback((): string | null => {
+    if (typeof window === 'undefined' || !userId) {
+      return null;
+    }
+    const url = new URL(`/p/${userId}`, window.location.origin);
+    url.searchParams.set('cvLang', cvLanguage);
+    if (activeCv) {
+      url.searchParams.set('cvId', activeCv.id);
+    }
+    return url.toString();
+  }, [userId, cvLanguage, activeCv]);
+
   const draft = useMemo(() => drafts[activeDraftKey] ?? createDefaultDraft(), [drafts, activeDraftKey, createDefaultDraft]);
+
+  const articleOptions = useMemo(
+    () => articles.filter((article) => article.showInCv !== false),
+    [articles],
+  );
 
   useEffect(() => {
     if (activeCv) {
@@ -264,9 +353,11 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
 
       const allowedProjects = new Set(projects.map((project) => project.id));
       const allowedExperiences = new Set(experiences.map((experience) => experience.id));
+      const allowedArticles = new Set(articleOptions.map((article) => article.id));
 
       setSelectedProjectIds(activeCv.selectedProjects.filter((id) => allowedProjects.has(id)));
       setSelectedExperienceIds(activeCv.selectedExperiences.filter((id) => allowedExperiences.has(id)));
+      setSelectedArticleIds(activeCv.selectedArticles.filter((id) => allowedArticles.has(id)));
 
       if (languageAllowance === 'all' || languageAllowance.includes(activeCv.language)) {
         setCvLanguage(activeCv.language);
@@ -286,16 +377,17 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
       setCvName(generateDefaultName(cvs, resolvedLanguage));
       setSelectedProjectIds(projects.map((project) => project.id));
       setSelectedExperienceIds(experiences.map((experience) => experience.id));
+      setSelectedArticleIds(articleOptions.map((article) => article.id));
     }
-  }, [activeCv, projects, experiences, locale, cvs, languageAllowance, t]);
+  }, [activeCv, articleOptions, projects, experiences, locale, cvs, languageAllowance, t]);
 
   useEffect(() => {
-    if (languageAllowance === 'all') {
+    if (hasFullLanguageAccess) {
       setLanguageNotice(null);
       return;
     }
     setLanguageNotice((current) => (current === t('cv.languageLimit') ? current : t('cv.languageUpgrade')));
-  }, [languageAllowance, t]);
+  }, [hasFullLanguageAccess, t]);
 
   useEffect(() => {
     if (typeof maxCvAllowance !== 'number') {
@@ -337,6 +429,21 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
     }))
   ), [projects, selectedProjectIds, cvLanguage]);
 
+  const articlesForPreview = useMemo(() => (
+    articleOptions
+      .filter((article) => selectedArticleIds.includes(article.id))
+      .map((article) => ({
+        id: article.id,
+        title: getTranslatedArticle(article, 'title', cvLanguage),
+        summary: getTranslatedArticle(article, 'summary', cvLanguage),
+        publication: getTranslatedArticle(article, 'publication', cvLanguage),
+        publicationDate: article.publicationDate ?? '',
+        authors: Array.isArray(article.authors) ? article.authors.filter(Boolean) : [],
+        link: article.link,
+        doi: article.doi,
+      }))
+  ), [articleOptions, selectedArticleIds, cvLanguage]);
+
   const skillsList = useMemo(() => {
     const raw = draft.skills.trim();
     if (raw) {
@@ -350,8 +457,10 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
     if (raw) {
       return raw.split(/\n+/).map((item) => item.trim()).filter(Boolean);
     }
-    if (userProfile.education && userProfile.education.length > 0) {
-      return userProfile.education.map((item) => [item.degree, item.institution, item.period].filter(Boolean).join(' • '));
+    if (Array.isArray(userProfile.education) && userProfile.education.length > 0) {
+      return userProfile.education
+        .map((item) => formatEducationEntry(item))
+        .filter((entry) => entry.length > 0);
     }
     return [];
   }, [draft.education, userProfile.education]);
@@ -416,7 +525,7 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
       setLanguageNotice(t('cv.languageLimit'));
       return;
     }
-    setLanguageNotice(languageAllowance === 'all' ? null : t('cv.languageUpgrade'));
+    setLanguageNotice(hasFullLanguageAccess ? null : t('cv.languageUpgrade'));
     setCvLanguage(language);
     updateDraft((current) => ({
       ...current,
@@ -537,6 +646,15 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
       return;
     }
 
+    const publicUrl = resolvePublicCvUrl();
+    if (publicUrl) {
+      const previewWindow = window.open(publicUrl, '_blank', 'noopener,noreferrer');
+      if (!previewWindow) {
+        window.location.assign(publicUrl);
+      }
+      return;
+    }
+
     const previewNode = previewRef.current;
     if (!previewNode) {
       return;
@@ -559,16 +677,18 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
       return;
     }
 
-    const url = new URL(window.location.href);
-    url.searchParams.set('view', 'public');
-    url.searchParams.set('cvLang', cvLanguage);
-    if (activeCv) {
-      url.searchParams.set('cvId', activeCv.id);
-    } else {
-      url.searchParams.delete('cvId');
+    let shareUrl = resolvePublicCvUrl();
+    if (!shareUrl) {
+      const fallbackUrl = new URL(window.location.href);
+      fallbackUrl.searchParams.set('view', 'public');
+      fallbackUrl.searchParams.set('cvLang', cvLanguage);
+      if (activeCv) {
+        fallbackUrl.searchParams.set('cvId', activeCv.id);
+      } else {
+        fallbackUrl.searchParams.delete('cvId');
+      }
+      shareUrl = fallbackUrl.toString();
     }
-
-    const shareUrl = url.toString();
 
     try {
       if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
@@ -603,6 +723,7 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
       language: cvLanguage,
       selectedProjects: selectedProjectIds,
       selectedExperiences: selectedExperienceIds,
+      selectedArticles: selectedArticleIds,
     };
 
     if (!activeCv && typeof maxCvAllowance === 'number' && cvs.length >= maxCvAllowance) {
@@ -669,6 +790,9 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
     setCvName(saved.name);
     setCvSaving(false);
     setCvSaved(true);
+    if (typeof window !== 'undefined') {
+      window.alert(t('cv.saved'));
+    }
     setTimeout(() => setCvSaved(false), 2000);
   };
 
@@ -706,6 +830,38 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
         <li className="text-sm text-[#9b8da8]">{t('cv.selectProjects')}</li>
       )}
     </ul>
+  );
+
+  const renderArticlesList = () => (
+    <div className="space-y-3">
+      {articlesForPreview.map((article) => {
+        const metadata: string[] = [];
+        if (article.authors.length > 0) {
+          metadata.push(article.authors.join(', '));
+        }
+        if (article.publication) {
+          metadata.push(article.publication);
+        }
+        if (article.publicationDate) {
+          metadata.push(article.publicationDate);
+        }
+
+        return (
+          <div key={article.id} className="text-sm text-[#6b5d7a] space-y-1">
+            <h3 className="font-semibold text-[#1a1534]">{article.title}</h3>
+            {metadata.length > 0 && (
+              <p className="text-xs text-[#a21d4c]">{metadata.join(' • ')}</p>
+            )}
+            {article.summary && (
+              <p className="text-sm text-[#6b5d7a] leading-relaxed">{article.summary}</p>
+            )}
+          </div>
+        );
+      })}
+      {articlesForPreview.length === 0 && (
+        <p className="text-sm text-[#9b8da8]">{t('cv.articlesEmpty')}</p>
+      )}
+    </div>
   );
 
   const renderSkillsChips = () => (
@@ -785,6 +941,11 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
         </section>
 
         <section className="mb-6">
+          {renderSectionHeading(sectionLabels.articles, true)}
+          {renderArticlesList()}
+        </section>
+
+        <section className="mb-6">
           {renderSectionHeading(sectionLabels.skills, true)}
           {renderSkillsChips()}
         </section>
@@ -844,6 +1005,11 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
             <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.projects}</h2>
             {renderProjectsList()}
           </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.articles}</h2>
+            {renderArticlesList()}
+          </section>
         </main>
       </div>
     </div>
@@ -879,6 +1045,13 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
         <div className="uppercase tracking-[0.3em] text-xs text-[#9b8da8] mb-2">{sectionLabels.experience}</div>
         <div className="space-y-4">
           {renderExperienceList()}
+        </div>
+      </section>
+
+      <section className="mb-6">
+        <div className="uppercase tracking-[0.3em] text-xs text-[#9b8da8] mb-2">{sectionLabels.articles}</div>
+        <div className="space-y-4">
+          {renderArticlesList()}
         </div>
       </section>
 
@@ -949,6 +1122,38 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
             ))}
             {projectsForPreview.length === 0 && (
               <p className="text-sm text-[#9b8da8]">{t('cv.selectProjects')}</p>
+            )}
+          </div>
+        </section>
+
+        <section className="mb-6">
+          <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.articles}</h2>
+          <div className="space-y-3">
+            {articlesForPreview.map((article) => {
+              const metadata: string[] = [];
+              if (article.authors.length > 0) {
+                metadata.push(article.authors.join(', '));
+              }
+              if (article.publication) {
+                metadata.push(article.publication);
+              }
+              if (article.publicationDate) {
+                metadata.push(article.publicationDate);
+              }
+              return (
+                <div key={article.id} className="bg-white/80 border border-white rounded-lg p-4">
+                  <h3 className="font-semibold text-[#a21d4c]">{article.title}</h3>
+                  {metadata.length > 0 && (
+                    <p className="text-xs text-[#a21d4c] mt-1">{metadata.join(' • ')}</p>
+                  )}
+                  {article.summary && (
+                    <p className="text-sm text-[#6b5d7a] mt-2">{article.summary}</p>
+                  )}
+                </div>
+              );
+            })}
+            {articlesForPreview.length === 0 && (
+              <p className="text-sm text-[#9b8da8]">{t('cv.articlesEmpty')}</p>
             )}
           </div>
         </section>
@@ -1184,6 +1389,37 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
                   ))}
                   {experiences.length === 0 && (
                     <p className="text-sm text-[#9b8da8]">Nenhuma experiencia registrada.</p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm text-[#6b5d7a] mb-2">{t('cv.selectArticles')}</label>
+                <div className="space-y-2 max-h-40 overflow-auto">
+                  {articleOptions.map((article) => (
+                    <label key={article.id} className="flex items-start gap-3 text-sm text-[#6b5d7a]">
+                      <input
+                        type="checkbox"
+                        checked={selectedArticleIds.includes(article.id)}
+                        onChange={(event) => setSelectedArticleIds((prev) => (
+                          event.target.checked
+                            ? [...prev, article.id]
+                            : prev.filter((id) => id !== article.id)
+                        ))}
+                        className="mt-1 w-4 h-4 text-[#a21d4c] bg-white border-gray-300 rounded focus:ring-[#a21d4c]"
+                      />
+                      <span>
+                        <span className="block">{getTranslatedArticle(article, 'title', cvLanguage)}</span>
+                        {(article.publication || article.publicationDate) && (
+                          <span className="block text-xs text-[#9b8da8]">
+                            {[article.publication, article.publicationDate].filter(Boolean).join(' • ')}
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                  ))}
+                  {articleOptions.length === 0 && (
+                    <p className="text-sm text-[#9b8da8]">{t('cv.articlesEmpty')}</p>
                   )}
                 </div>
               </div>

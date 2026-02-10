@@ -4,7 +4,7 @@ import { Palette, Type, Layout, Sun, Moon, Check } from 'lucide-react';
 import { Card } from './Card';
 import { Button } from './Button';
 import { PublicPortfolio } from './PublicPortfolio';
-import type { CV, Experience, FeaturedVideo, Project, SubscriptionPlan, UserProfile, UserTheme } from '../types';
+import type { CV, Experience, FeaturedVideo, Project, ScientificArticle, SubscriptionPlan, UserProfile, UserTheme } from '../types';
 import type { PlanLimits } from '../data/plans';
 import { useLocale } from '../i18n';
 
@@ -15,6 +15,7 @@ interface AppearanceProps {
   projects: Project[];
   experiences: Experience[];
   featuredVideos: FeaturedVideo[];
+  articles: ScientificArticle[];
   cvs: CV[];
   planTier: SubscriptionPlan;
   planLimits: PlanLimits;
@@ -223,6 +224,7 @@ export function Appearance({
   projects,
   experiences,
   featuredVideos,
+  articles,
   cvs,
   planTier,
   planLimits,
@@ -495,6 +497,7 @@ export function Appearance({
                   userProfile={userProfile}
                   projects={projects}
                   experiences={experiences}
+                  articles={articles}
                   featuredVideos={featuredVideos}
                   cvs={cvs}
                   previewMode
