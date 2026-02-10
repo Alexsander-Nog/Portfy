@@ -40,7 +40,8 @@ import {
   Upload,
   GripVertical,
   X,
-  Check
+  Check,
+  Palette
 } from 'lucide-react';
 import { PLAN_LIMITS, resolvePlanName } from '../data/plans';
 
@@ -281,6 +282,59 @@ export function Dashboard(props: DashboardProps) {
       es: { title: '', company: '', description: '' },
     });
   };
+
+  const renderSettings = () => (
+    <div className="px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-[#1a1534] mb-2">{t('settings.title')}</h1>
+        <p className="text-[#6b5d7a]">{t('settings.subtitle')}</p>
+      </div>
+
+      <Card className="mb-6">
+        <h2 className="text-xl font-bold text-[#1a1534] mb-4">{t('settings.accountSection')}</h2>
+        <div className="grid gap-4 md:grid-cols-3">
+          <div>
+            <p className="text-xs text-[#6b5d7a] uppercase">{t('settings.accountName')}</p>
+            <p className="text-sm font-medium text-[#1a1534]">
+              {userProfile.fullName || t('settings.empty')}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-[#6b5d7a] uppercase">{t('settings.accountEmail')}</p>
+            <p className="text-sm font-medium text-[#1a1534]">
+              {userProfile.email || userEmail || t('settings.empty')}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-[#6b5d7a] uppercase">{t('settings.accountPlan')}</p>
+            <p className="text-sm font-medium text-[#1a1534]">{planName}</p>
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="text-xl font-bold text-[#1a1534] mb-4">{t('settings.actionsSection')}</h2>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <Button
+            variant="outline"
+            className="justify-start"
+            onClick={() => setActiveSection('appearance')}
+          >
+            <Palette className="w-5 h-5 mr-2" />
+            {t('settings.actions.appearance')}
+          </Button>
+          <Button
+            variant="outline"
+            className="justify-start"
+            onClick={() => setActiveSection('language')}
+          >
+            <Globe className="w-5 h-5 mr-2" />
+            {t('settings.actions.language')}
+          </Button>
+        </div>
+      </Card>
+    </div>
+  );
 
   const handleCopyShareLink = async () => {
     if (!shareLink) {
@@ -1119,88 +1173,41 @@ export function Dashboard(props: DashboardProps) {
                         </button>
                       </div>
                     </div>
-                    {(() => {
-                      const educationList = Array.isArray(profileForm.education) ? profileForm.education : [];
-                      if (educationList.length === 0) {
-                        return <p className="text-sm text-[#6b5d7a]">Nenhuma formacao adicionada.</p>;
-                      }
-
-                      return (
-                        <div className="space-y-4">
-                          {educationList.map((item, index) => (
-                            <div key={`${item.institution}-${index}`} className="rounded-lg border border-[#e8e3f0] p-4 bg-white">
-                              <div className="grid md:grid-cols-2 gap-4">
-                                <div>
-                                  <label className="block text-xs text-[#6b5d7a] mb-1">Instituicao</label>
-                                  <input
-                                    type="text"
-                                    value={item.institution}
-                                    onChange={(e) => {
-                                      const next = [...educationList];
-                                      next[index] = { ...next[index], institution: e.target.value };
-                                      setProfileForm({ ...profileForm, education: next });
-                                    }}
-                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs text-[#6b5d7a] mb-1">Curso</label>
-                                  <input
-                                    type="text"
-                                    value={item.degree}
-                                    onChange={(e) => {
-                                      const next = [...educationList];
-                                      next[index] = { ...next[index], degree: e.target.value };
-                                      setProfileForm({ ...profileForm, education: next });
-                                    }}
-                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs text-[#6b5d7a] mb-1">Periodo</label>
-                                  <input
-                                    type="text"
-                                    value={item.period}
-                                    onChange={(e) => {
-                                      const next = [...educationList];
-                                      next[index] = { ...next[index], period: e.target.value };
-                                      setProfileForm({ ...profileForm, education: next });
-                                    }}
-                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
-                                  />
-                                </div>
-                                <div>
-                                  <label className="block text-xs text-[#6b5d7a] mb-1">Descricao</label>
-                                  <input
-                                    type="text"
-                                    value={item.description ?? ''}
-                                    onChange={(e) => {
-                                      const next = [...educationList];
-                                      next[index] = { ...next[index], description: e.target.value };
-                                      setProfileForm({ ...profileForm, education: next });
-                                    }}
-                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
-                                  />
-                                </div>
-                              </div>
-                              <div className="flex justify-end mt-3">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => {
-                                    const next = educationList.filter((_, idx) => idx !== index);
-                                    setProfileForm({ ...profileForm, education: next });
-                                  }}
-                                >
-                                  <Trash2 className="w-4 h-4 mr-2" />
-                                  Remover
-                                </Button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm text-[#6b5d7a] mb-2">
+                          {t('portfolio.fullName')}
+                        </label>
+                        <input
+                          type="text"
+                          value={profileForm.fullName}
+                          onChange={(e) => setProfileForm({ ...profileForm, fullName: e.target.value })}
+                          className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-[#6b5d7a] mb-2">
+                          {t('portfolio.titleField')}
+                        </label>
+                        <input
+                          type="text"
+                          value={profileForm.title}
+                          onChange={(e) => setProfileForm({ ...profileForm, title: e.target.value })}
+                          className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-[#6b5d7a] mb-2">
+                          {t('portfolio.bio')}
+                        </label>
+                        <textarea
+                          rows={4}
+                          value={profileForm.bio}
+                          onChange={(e) => setProfileForm({ ...profileForm, bio: e.target.value })}
+                          className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
+                        />
+                      </div>
+                    </div>
 
                     <div className="border-t border-[#e8e3f0] pt-4 mt-6">
                       <div className="flex items-center justify-between mb-4">
@@ -1301,6 +1308,89 @@ export function Dashboard(props: DashboardProps) {
                         </div>
                       )}
                     </div>
+
+                    {(() => {
+                      const educationList = Array.isArray(profileForm.education) ? profileForm.education : [];
+                      if (educationList.length === 0) {
+                        return <p className="text-sm text-[#6b5d7a]">Nenhuma formacao adicionada.</p>;
+                      }
+
+                      return (
+                        <div className="space-y-4">
+                          {educationList.map((item, index) => (
+                            <div key={`${item.institution}-${index}`} className="rounded-lg border border-[#e8e3f0] p-4 bg-white">
+                              <div className="grid md:grid-cols-2 gap-4">
+                                <div>
+                                  <label className="block text-xs text-[#6b5d7a] mb-1">Instituicao</label>
+                                  <input
+                                    type="text"
+                                    value={item.institution}
+                                    onChange={(e) => {
+                                      const next = [...educationList];
+                                      next[index] = { ...next[index], institution: e.target.value };
+                                      setProfileForm({ ...profileForm, education: next });
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-[#6b5d7a] mb-1">Curso</label>
+                                  <input
+                                    type="text"
+                                    value={item.degree}
+                                    onChange={(e) => {
+                                      const next = [...educationList];
+                                      next[index] = { ...next[index], degree: e.target.value };
+                                      setProfileForm({ ...profileForm, education: next });
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-[#6b5d7a] mb-1">Periodo</label>
+                                  <input
+                                    type="text"
+                                    value={item.period}
+                                    onChange={(e) => {
+                                      const next = [...educationList];
+                                      next[index] = { ...next[index], period: e.target.value };
+                                      setProfileForm({ ...profileForm, education: next });
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-[#6b5d7a] mb-1">Descricao</label>
+                                  <input
+                                    type="text"
+                                    value={item.description ?? ''}
+                                    onChange={(e) => {
+                                      const next = [...educationList];
+                                      next[index] = { ...next[index], description: e.target.value };
+                                      setProfileForm({ ...profileForm, education: next });
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex justify-end mt-3">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    const next = educationList.filter((_, idx) => idx !== index);
+                                    setProfileForm({ ...profileForm, education: next });
+                                  }}
+                                >
+                                  <Trash2 className="w-4 h-4 mr-2" />
+                                  Remover
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -2458,6 +2548,8 @@ export function Dashboard(props: DashboardProps) {
         );
       case 'language':
         return renderLanguage();
+      case 'settings':
+        return renderSettings();
       case 'subscription': {
         const cvLanguagesCount = new Set(cvs.map((cv) => cv.language)).size;
         const planUsage = {
