@@ -14,6 +14,7 @@ const TABLES = {
 
 const PRELAUNCH_PLAN_TIER: SubscriptionPlan = "pro";
 const PRELAUNCH_STATUS: Subscription["status"] = "trialing";
+const PRELAUNCH_GRACE_DAYS = 3;
 
 const isMissingOptionalColumn = (error?: PostgrestError | null) => Boolean(error && error.code === "42703");
 
@@ -554,7 +555,7 @@ export async function fetchSubscription(userId: string): Promise<Subscription | 
     data.plan_tier !== PRELAUNCH_PLAN_TIER ||
     data.status !== PRELAUNCH_STATUS ||
     data.trial_ends_at !== null ||
-    data.grace_days !== null;
+    data.grace_days !== PRELAUNCH_GRACE_DAYS;
 
   if (needsUpdate) {
     const { data: updated, error: updateError } = await supabase
@@ -563,7 +564,7 @@ export async function fetchSubscription(userId: string): Promise<Subscription | 
         plan_tier: PRELAUNCH_PLAN_TIER,
         status: PRELAUNCH_STATUS,
         trial_ends_at: null,
-        grace_days: null,
+        grace_days: PRELAUNCH_GRACE_DAYS,
       })
       .eq("id", data.id)
       .select("id, user_id, status, plan_tier, trial_ends_at, current_period_end, grace_days, updated_at")
@@ -603,7 +604,7 @@ export async function ensureSubscription(userId: string, _trialDays = 15): Promi
       status: PRELAUNCH_STATUS,
       plan_tier: PRELAUNCH_PLAN_TIER,
       trial_ends_at: null,
-      grace_days: null,
+      grace_days: PRELAUNCH_GRACE_DAYS,
     }, { onConflict: "user_id" })
     .select("id, user_id, status, plan_tier, trial_ends_at, current_period_end, grace_days, updated_at")
     .single();
