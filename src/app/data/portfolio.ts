@@ -194,6 +194,10 @@ export async function upsertUserProfile(userId: string, profile: Omit<UserProfil
     }
   }
 
+  const socialLinksJson = profile.socialLinks ? ensureValidJsonb(profile.socialLinks) : null;
+  const educationJson = profile.education ? ensureValidJsonb(profile.education) : null;
+  const translationsJson = cleanTranslations ? ensureValidJsonb(cleanTranslations) : null;
+
   const payload: Record<string, any> = {
     id: userId,
     full_name: profile.fullName,
@@ -203,10 +207,10 @@ export async function upsertUserProfile(userId: string, profile: Omit<UserProfil
     email: profile.email ?? null,
     phone: profile.phone ?? null,
     photo_url: profile.photoUrl ?? null,
-    social_links: profile.socialLinks ?? null,
+    social_links: socialLinksJson,
     skills: profile.skills ?? [],
-    education: profile.education ?? null,
-    translations: cleanTranslations,
+    education: educationJson,
+    translations: translationsJson,
   };
 
   if (profile.preferredLocale) {
@@ -219,11 +223,37 @@ export async function upsertUserProfile(userId: string, profile: Omit<UserProfil
   const { data, error } = await supabase
     .from(TABLES.profiles)
     .upsert(payload)
-    .select("id, full_name, title, bio, location, email, phone, photo_url, social_links, skills, education, translations")
+    .select("id, full_name, title, bio, location, email, phone, photo_url, social_links, skills, education, translations, preferred_locale")
     .single();
 
   if (error) {
     console.error('Erro ao upsert profile (primeira tentativa):', error);
+    const updateAttempt = await supabase
+      .from(TABLES.profiles)
+      .update(payload)
+      .eq("id", userId)
+      .select("id, full_name, title, bio, location, email, phone, photo_url, social_links, skills, education, translations, preferred_locale")
+      .maybeSingle();
+
+    if (!updateAttempt.error && updateAttempt.data) {
+      const row = updateAttempt.data;
+      return {
+        id: row.id,
+        fullName: row.full_name,
+        title: row.title ?? undefined,
+        bio: row.bio ?? undefined,
+        location: row.location ?? undefined,
+        email: row.email ?? undefined,
+        phone: row.phone ?? undefined,
+        photoUrl: row.photo_url ?? undefined,
+        socialLinks: row.social_links ?? undefined,
+        skills: row.skills ?? [],
+        education: row.education ?? undefined,
+        translations: row.translations ?? undefined,
+        preferredLocale: (row.preferred_locale as Locale | null) ?? undefined,
+      };
+    }
+
     if (isMissingOptionalColumn(error)) {
       console.warn('upsertUserProfile: coluna opcional ausente, aplicando payload básico. Erro original:', error);
       const legacyPayload: Record<string, any> = {
@@ -235,7 +265,7 @@ export async function upsertUserProfile(userId: string, profile: Omit<UserProfil
         email: profile.email ?? null,
         phone: profile.phone ?? null,
         photo_url: profile.photoUrl ?? null,
-        social_links: profile.socialLinks ?? null,
+        social_links: socialLinksJson,
       };
 
       const fallback = await supabase
