@@ -137,7 +137,7 @@ export function Dashboard(props: DashboardProps) {
     phone: userProfile.phone ?? '',
     photoUrl: userProfile.photoUrl ?? '',
     skills: (userProfile.skills ?? []).join(', '),
-    education: userProfile.education ?? [],
+    education: Array.isArray(userProfile.education) ? userProfile.education : [],
     socialLinks: {
       website: userProfile.socialLinks?.website ?? '',
       linkedin: userProfile.socialLinks?.linkedin ?? '',
@@ -187,7 +187,7 @@ export function Dashboard(props: DashboardProps) {
       phone: userProfile.phone ?? '',
       photoUrl: userProfile.photoUrl ?? '',
       skills: (userProfile.skills ?? []).join(', '),
-      education: userProfile.education ?? [],
+      education: Array.isArray(userProfile.education) ? userProfile.education : [],
       socialLinks: {
         website: userProfile.socialLinks?.website ?? '',
         linkedin: userProfile.socialLinks?.linkedin ?? '',
@@ -800,6 +800,10 @@ export function Dashboard(props: DashboardProps) {
       }
     }
 
+    const safeEducation = Array.isArray(profileForm.education)
+      ? profileForm.education
+      : [];
+
     const payload: Omit<UserProfile, 'id'> = {
       fullName: profileForm.fullName,
       preferredLocale: userProfile.preferredLocale ?? locale,
@@ -810,7 +814,7 @@ export function Dashboard(props: DashboardProps) {
       phone: profileForm.phone || undefined,
       photoUrl: profileForm.photoUrl || undefined,
       skills,
-      education: profileForm.education,
+      education: safeEducation,
       translations: profileTranslations,
       socialLinks: {
         website: profileForm.socialLinks.website || undefined,
@@ -1115,83 +1119,88 @@ export function Dashboard(props: DashboardProps) {
                         </button>
                       </div>
                     </div>
-                    {profilePhotoError && (
-                      <p className="text-sm text-red-600">{profilePhotoError}</p>
-                    )}
-                  </div>
+                    {(() => {
+                      const educationList = Array.isArray(profileForm.education) ? profileForm.education : [];
+                      if (educationList.length === 0) {
+                        return <p className="text-sm text-[#6b5d7a]">Nenhuma formacao adicionada.</p>;
+                      }
 
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm text-[#6b5d7a] mb-2">{t('portfolio.fullName')}</label>
-                      <input
-                        type="text"
-                        value={profileForm.fullName}
-                        onChange={(e) => setProfileForm({ ...profileForm, fullName: e.target.value })}
-                        className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm text-[#6b5d7a] mb-2">{t('portfolio.titleField')}</label>
-                      <input
-                        type="text"
-                        value={profileForm.title}
-                        onChange={(e) => setProfileForm({ ...profileForm, title: e.target.value })}
-                        className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm text-[#6b5d7a] mb-2">{t('portfolio.bio')}</label>
-                      <textarea
-                        rows={4}
-                        value={profileForm.bio}
-                        onChange={(e) => setProfileForm({ ...profileForm, bio: e.target.value })}
-                        className="w-full px-4 py-2 rounded-lg border border-[#e8e3f0] bg-white focus:outline-none focus:ring-2 focus:ring-[#a21d4c]"
-                      />
-                    </div>
-
-                    {/* Translations Section */}
-                    <div className="border-t border-[#e8e3f0] pt-4">
-                      <div className="flex items-center justify-between mb-4">
-                        <div>
-                          <label className="block text-sm font-medium text-[#1a1534] mb-1">
-                            Traduções (Inglês/Espanhol)
-                          </label>
-                          <p className="text-xs text-[#6b5d7a]">
-                            Adicione traduções do título e biografia para outros idiomas
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setEnableTranslations(!enableTranslations)}
-                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                            enableTranslations ? 'bg-[#a21d4c]' : 'bg-gray-300'
-                          }`}
-                        >
-                          <span
-                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                              enableTranslations ? 'translate-x-6' : 'translate-x-1'
-                            }`}
-                          />
-                        </button>
-                      </div>
-
-                      {enableTranslations && (
+                      return (
                         <div className="space-y-4">
-                          {/* English Translation */}
-                          <div className="bg-[#f5f3f7] p-4 rounded-lg">
-                            <h4 className="text-sm font-medium text-[#1a1534] mb-3 flex items-center gap-2">
-                              <Globe className="w-4 h-4" />
-                              English
-                            </h4>
-                            <div className="space-y-3">
-                              <div>
-                                <label className="block text-xs text-[#6b5d7a] mb-1">Title (English)</label>
-                                <input
-                                  type="text"
-                                  value={translations.en.title}
-                                  onChange={(e) => setTranslations({
+                          {educationList.map((item, index) => (
+                            <div key={`${item.institution}-${index}`} className="rounded-lg border border-[#e8e3f0] p-4 bg-white">
+                              <div className="grid md:grid-cols-2 gap-4">
+                                <div>
+                                  <label className="block text-xs text-[#6b5d7a] mb-1">Instituicao</label>
+                                  <input
+                                    type="text"
+                                    value={item.institution}
+                                    onChange={(e) => {
+                                      const next = [...educationList];
+                                      next[index] = { ...next[index], institution: e.target.value };
+                                      setProfileForm({ ...profileForm, education: next });
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-[#6b5d7a] mb-1">Curso</label>
+                                  <input
+                                    type="text"
+                                    value={item.degree}
+                                    onChange={(e) => {
+                                      const next = [...educationList];
+                                      next[index] = { ...next[index], degree: e.target.value };
+                                      setProfileForm({ ...profileForm, education: next });
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-[#6b5d7a] mb-1">Periodo</label>
+                                  <input
+                                    type="text"
+                                    value={item.period}
+                                    onChange={(e) => {
+                                      const next = [...educationList];
+                                      next[index] = { ...next[index], period: e.target.value };
+                                      setProfileForm({ ...profileForm, education: next });
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-xs text-[#6b5d7a] mb-1">Descricao</label>
+                                  <input
+                                    type="text"
+                                    value={item.description ?? ''}
+                                    onChange={(e) => {
+                                      const next = [...educationList];
+                                      next[index] = { ...next[index], description: e.target.value };
+                                      setProfileForm({ ...profileForm, education: next });
+                                    }}
+                                    className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                                  />
+                                </div>
+                              </div>
+                              <div className="flex justify-end mt-3">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    const next = educationList.filter((_, idx) => idx !== index);
+                                    setProfileForm({ ...profileForm, education: next });
+                                  }}
+                                >
+                                  <Trash2 className="w-4 h-4 mr-2" />
+                                  Remover
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                                     ...translations,
                                     en: { ...translations.en, title: e.target.value }
                                   })}
@@ -1421,7 +1430,7 @@ export function Dashboard(props: DashboardProps) {
                     phone: userProfile.phone ?? '',
                     photoUrl: userProfile.photoUrl ?? '',
                     skills: (userProfile.skills ?? []).join(', '),
-                    education: userProfile.education ?? [],
+                    education: Array.isArray(userProfile.education) ? userProfile.education : [],
                     socialLinks: {
                       website: userProfile.socialLinks?.website ?? '',
                       linkedin: userProfile.socialLinks?.linkedin ?? '',
@@ -1459,95 +1468,108 @@ export function Dashboard(props: DashboardProps) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => setProfileForm({
-              ...profileForm,
-              education: [
-                ...profileForm.education,
-                { institution: '', degree: '', period: '', description: '' }
-              ],
-            })}
+            onClick={() => {
+              const currentEducation = Array.isArray(profileForm.education)
+                ? profileForm.education
+                : [];
+              setProfileForm({
+                ...profileForm,
+                education: [
+                  ...currentEducation,
+                  { institution: '', degree: '', period: '', description: '' }
+                ],
+              });
+            }}
           >
             <Plus className="w-4 h-4 mr-2" />
             Adicionar
           </Button>
         </div>
 
-        {profileForm.education.length === 0 ? (
-          <p className="text-sm text-[#6b5d7a]">Nenhuma formacao adicionada.</p>
-        ) : (
-          <div className="space-y-4">
-            {profileForm.education.map((item, index) => (
-              <div key={`${item.institution}-${index}`} className="rounded-lg border border-[#e8e3f0] p-4 bg-white">
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs text-[#6b5d7a] mb-1">Instituicao</label>
-                    <input
-                      type="text"
-                      value={item.institution}
-                      onChange={(e) => {
-                        const next = [...profileForm.education];
-                        next[index] = { ...next[index], institution: e.target.value };
-                        setProfileForm({ ...profileForm, education: next });
-                      }}
-                      className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
-                    />
+        {(() => {
+          const educationList = Array.isArray(profileForm.education)
+            ? profileForm.education
+            : [];
+
+          if (educationList.length === 0) {
+            return <p className="text-sm text-[#6b5d7a]">Nenhuma formacao adicionada.</p>;
+          }
+
+          return (
+            <div className="space-y-4">
+              {educationList.map((item, index) => (
+                <div key={`${item.institution}-${index}`} className="rounded-lg border border-[#e8e3f0] p-4 bg-white">
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs text-[#6b5d7a] mb-1">Instituicao</label>
+                      <input
+                        type="text"
+                        value={item.institution}
+                        onChange={(e) => {
+                          const next = [...educationList];
+                          next[index] = { ...next[index], institution: e.target.value };
+                          setProfileForm({ ...profileForm, education: next });
+                        }}
+                        className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-[#6b5d7a] mb-1">Curso</label>
+                      <input
+                        type="text"
+                        value={item.degree}
+                        onChange={(e) => {
+                          const next = [...educationList];
+                          next[index] = { ...next[index], degree: e.target.value };
+                          setProfileForm({ ...profileForm, education: next });
+                        }}
+                        className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-[#6b5d7a] mb-1">Periodo</label>
+                      <input
+                        type="text"
+                        value={item.period}
+                        onChange={(e) => {
+                          const next = [...educationList];
+                          next[index] = { ...next[index], period: e.target.value };
+                          setProfileForm({ ...profileForm, education: next });
+                        }}
+                        className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-[#6b5d7a] mb-1">Descricao</label>
+                      <input
+                        type="text"
+                        value={item.description ?? ''}
+                        onChange={(e) => {
+                          const next = [...educationList];
+                          next[index] = { ...next[index], description: e.target.value };
+                          setProfileForm({ ...profileForm, education: next });
+                        }}
+                        className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs text-[#6b5d7a] mb-1">Curso</label>
-                    <input
-                      type="text"
-                      value={item.degree}
-                      onChange={(e) => {
-                        const next = [...profileForm.education];
-                        next[index] = { ...next[index], degree: e.target.value };
+                  <div className="flex justify-end mt-3">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        const next = educationList.filter((_, idx) => idx !== index);
                         setProfileForm({ ...profileForm, education: next });
                       }}
-                      className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-[#6b5d7a] mb-1">Periodo</label>
-                    <input
-                      type="text"
-                      value={item.period}
-                      onChange={(e) => {
-                        const next = [...profileForm.education];
-                        next[index] = { ...next[index], period: e.target.value };
-                        setProfileForm({ ...profileForm, education: next });
-                      }}
-                      className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-[#6b5d7a] mb-1">Descricao</label>
-                    <input
-                      type="text"
-                      value={item.description ?? ''}
-                      onChange={(e) => {
-                        const next = [...profileForm.education];
-                        next[index] = { ...next[index], description: e.target.value };
-                        setProfileForm({ ...profileForm, education: next });
-                      }}
-                      className="w-full px-3 py-2 rounded-lg border border-[#e8e3f0] bg-white"
-                    />
+                    >
+                      Remover
+                    </Button>
                   </div>
                 </div>
-                <div className="flex justify-end mt-3">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      const next = profileForm.education.filter((_, idx) => idx !== index);
-                      setProfileForm({ ...profileForm, education: next });
-                    }}
-                  >
-                    Remover
-                  </Button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+              ))}
+            </div>
+          );
+        })()}
       </Card>
     </div>
   );
