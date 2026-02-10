@@ -1201,6 +1201,46 @@ export function Dashboard(props: DashboardProps) {
                         </div>
                       );
                     })()}
+
+                    <div className="border-t border-[#e8e3f0] pt-4 mt-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <div>
+                          <label className="block text-sm font-medium text-[#1a1534] mb-1">
+                            Traduções (Inglês/Espanhol)
+                          </label>
+                          <p className="text-xs text-[#6b5d7a]">
+                            Adicione traduções do título e biografia para outros idiomas
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setEnableTranslations(!enableTranslations)}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                            enableTranslations ? 'bg-[#a21d4c]' : 'bg-gray-300'
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              enableTranslations ? 'translate-x-6' : 'translate-x-1'
+                            }`}
+                          />
+                        </button>
+                      </div>
+
+                      {enableTranslations && (
+                        <div className="space-y-4">
+                          <div className="bg-[#f5f3f7] p-4 rounded-lg">
+                            <h4 className="text-sm font-medium text-[#1a1534] mb-3 flex items-center gap-2">
+                              <Globe className="w-4 h-4" />
+                              English
+                            </h4>
+                            <div className="space-y-3">
+                              <div>
+                                <label className="block text-xs text-[#6b5d7a] mb-1">Title (English)</label>
+                                <input
+                                  type="text"
+                                  value={translations.en.title}
+                                  onChange={(e) => setTranslations({
                                     ...translations,
                                     en: { ...translations.en, title: e.target.value }
                                   })}
@@ -1224,7 +1264,6 @@ export function Dashboard(props: DashboardProps) {
                             </div>
                           </div>
 
-                          {/* Spanish Translation */}
                           <div className="bg-[#f5f3f7] p-4 rounded-lg">
                             <h4 className="text-sm font-medium text-[#1a1534] mb-3 flex items-center gap-2">
                               <Globe className="w-4 h-4" />
