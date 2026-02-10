@@ -141,9 +141,9 @@ export async function fetchUserProfile(userId: string): Promise<UserProfile | nu
   const socialLinks = row.social_links && typeof row.social_links === 'object'
     ? row.social_links
     : undefined;
-  const education = row.education && typeof row.education === 'object'
+  const education = Array.isArray(row.education)
     ? row.education
-    : undefined;
+    : [];
   const translations = row.translations && typeof row.translations === 'object'
     ? row.translations
     : undefined;
@@ -291,7 +291,7 @@ export async function upsertUserProfile(userId: string, profile: Omit<UserProfil
         photoUrl: fallback.data.photo_url ?? undefined,
         socialLinks: fallback.data.social_links ?? undefined,
         skills: [],
-        education: undefined,
+        education: [],
         translations: undefined,
         preferredLocale: profile.preferredLocale ?? undefined,
       };
@@ -335,55 +335,80 @@ export async function updatePreferredLocale(
   const { data, error } = await supabase
     .from(TABLES.profiles)
     .update({ preferred_locale: preferredLocale })
-    .eq("id", userId)
+    .select("id, full_name, title, bio, location, email, phone, photo_url, social_links, skills, education, translations, preferred_locale")
     .select("preferred_locale")
     .maybeSingle();
 
   if (isMissingOptionalColumn(error)) {
+    if (isMissingOptionalColumn(error)) {
+      console.warn('upsertUserProfile: coluna opcional ausente, aplicando payload básico. Erro original:', error);
+      const legacyPayload: Record<string, any> = {
+        id: userId,
+        full_name: profile.fullName,
+        title: profile.title ?? null,
+        bio: profile.bio ?? null,
+        location: profile.location ?? null,
+        email: profile.email ?? null,
+        phone: profile.phone ?? null,
+        photo_url: profile.photoUrl ?? null,
+        social_links: socialLinksJson,
+      };
+
+      const fallback = await supabase
+        .from(TABLES.profiles)
+        .upsert(legacyPayload)
+        .select("id, full_name, title, bio, location, email, phone, photo_url, social_links")
+        .single();
+
+      if (fallback.error || !fallback.data) {
+        console.error('Erro no fallback de upsertUserProfile:', fallback.error);
+        return null;
+      }
+
+      console.log('Perfil salvo com fallback básico:', fallback.data);
+      return {
+        id: fallback.data.id,
+        fullName: fallback.data.full_name,
+        title: fallback.data.title ?? undefined,
+        bio: fallback.data.bio ?? undefined,
+        location: fallback.data.location ?? undefined,
+        email: fallback.data.email ?? undefined,
+        phone: fallback.data.phone ?? undefined,
+        photoUrl: fallback.data.photo_url ?? undefined,
+        socialLinks: fallback.data.social_links ?? undefined,
+        skills: [],
+        education: undefined,
+        translations: undefined,
+        preferredLocale: profile.preferredLocale ?? undefined,
+      };
+    }
+
+    const updateAttempt = await supabase
+      .from(TABLES.profiles)
+      .update(payload)
+      .eq("id", userId)
+      .select("id, full_name, title, bio, location, email, phone, photo_url, social_links, skills, education, translations, preferred_locale")
+      .maybeSingle();
+
+    if (!updateAttempt.error && updateAttempt.data) {
+      const row = updateAttempt.data;
+      return {
+        id: row.id,
+        fullName: row.full_name,
+        title: row.title ?? undefined,
+        bio: row.bio ?? undefined,
+        location: row.location ?? undefined,
+        email: row.email ?? undefined,
+        phone: row.phone ?? undefined,
+        photoUrl: row.photo_url ?? undefined,
+        socialLinks: row.social_links ?? undefined,
+        skills: row.skills ?? [],
+        education: Array.isArray(row.education) ? row.education : [],
+        translations: row.translations ?? undefined,
+        preferredLocale: (row.preferred_locale as Locale | null) ?? undefined,
+      };
+    }
     console.warn('preferred_locale column ausente, mantendo preferencia apenas em memória. Erro original:', error);
-    return preferredLocale;
-  }
-
-  if (data?.preferred_locale) {
-    return data.preferred_locale as Locale;
-  }
-
-  if (error && error.code !== "PGRST116") {
-    console.error("Erro ao atualizar preferred_locale:", error);
-  }
-
-  const fullName = fallback?.fullName && fallback.fullName.trim().length > 0
-    ? fallback.fullName
-    : "Novo usuário";
-
-  const insertPayload: Record<string, any> = {
-    id: userId,
-    full_name: fullName,
-    email: fallback?.email ?? null,
-  };
-
-  if (!error || !isMissingOptionalColumn(error)) {
-    insertPayload.preferred_locale = preferredLocale;
-  }
-
-  const insertResult = await supabase
-    .from(TABLES.profiles)
-    .upsert(insertPayload, { onConflict: "id" })
-    .select("preferred_locale")
-    .single();
-
-  if (isMissingOptionalColumn(insertResult.error)) {
-    console.warn('preferred_locale ausente durante upsert; preferencia não persistida no banco.');
-    return preferredLocale;
-  }
-
-  if (insertResult.error) {
-    console.error("Erro ao inserir preferred_locale:", insertResult.error);
-    return null;
-  }
-
-  return (insertResult.data?.preferred_locale as Locale | null) ?? null;
-}
 
 export async function fetchUserTheme(userId: string): Promise<UserTheme | null> {
   console.log('=== fetchUserTheme INICIADO ===');
@@ -402,7 +427,7 @@ export async function fetchUserTheme(userId: string): Promise<UserTheme | null> 
 
   console.log('Resposta do Supabase (fetchUserTheme):');
   console.log('  data:', data);
-  console.log('  error:', error);
+      education: Array.isArray(data.education) ? data.education : [],
 
   if (error) {
     console.error('Erro no fetchUserTheme:', error);
