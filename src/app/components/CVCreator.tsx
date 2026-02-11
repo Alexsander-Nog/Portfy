@@ -1,21 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from './Card';
 import { Button } from './Button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import {
   FileText,
   Download,
   Eye,
   Check,
-  Globe,
-  Mail,
-  Phone,
-  MapPin,
   Trash2,
   Loader2,
 } from 'lucide-react';
-import type { CV, EducationItem, Experience, Project, ScientificArticle, SubscriptionPlan, UserProfile } from '../types';
+import { CVRenderer } from './templates';
+import type { CV, CvTemplateId, EducationItem, Experience, Project, ScientificArticle, SubscriptionPlan, UserProfile } from '../types';
 import { useLocale } from '../i18n';
-import { createCv, deleteCv, updateCv } from '../data/portfolio';
+import { createCv, deleteCv, updateCv, upsertUserProfile } from '../data/portfolio';
 import { isSupabaseConfigured } from '../../lib/supabaseClient';
 import { PLAN_LIMITS, isLanguageAllowed } from '../data/plans';
 
@@ -24,7 +22,7 @@ type ArticleTranslationField = 'title' | 'summary' | 'publication';
 type CvLanguage = CV['language'];
 
 type TemplateOption = {
-  id: 'modern' | 'minimal' | 'corporate' | 'creative';
+  id: CvTemplateId;
   name: string;
   description: string;
 };
@@ -37,12 +35,11 @@ type CvDraft = {
   template: TemplateOption['id'];
 };
 
-type ContactItem = {
-  icon: ReactNode;
-  value: string;
-};
-
 const NEW_CV_ID = '__new__';
+
+type PreviewRenderOptions = {
+  attachRef?: boolean;
+};
 
 const languageOptions: Array<{ value: CvLanguage; label: string; flag: string }> = [
   { value: 'pt', label: 'Portuguese', flag: '🇧🇷' },
@@ -60,30 +57,30 @@ const CV_SECTION_LABELS: Record<CvLanguage, {
   contact: string;
 }> = {
   pt: {
-    summary: 'Resumo Profissional',
-    experience: 'Experiencia',
-    projects: 'Projetos em Destaque',
-    articles: 'Artigos Cientificos',
+    summary: 'Resumo profissional',
+    experience: 'Experiências profissionais',
+    projects: 'Projetos em destaque',
+    articles: 'Artigos científicos',
     skills: 'Habilidades',
-    education: 'Formacao',
+    education: 'Formação acadêmica',
     contact: 'Contato',
   },
   en: {
-    summary: 'Professional Summary',
-    experience: 'Experience',
-    projects: 'Highlighted Projects',
-    articles: 'Scientific Articles',
+    summary: 'Professional summary',
+    experience: 'Professional experience',
+    projects: 'Featured projects',
+    articles: 'Scientific articles',
     skills: 'Skills',
     education: 'Education',
     contact: 'Contact',
   },
   es: {
-    summary: 'Resumen Profesional',
-    experience: 'Experiencia',
-    projects: 'Proyectos Destacados',
-    articles: 'Articulos Cientificos',
+    summary: 'Resumen profesional',
+    experience: 'Experiencia profesional',
+    projects: 'Proyectos destacados',
+    articles: 'Artículos científicos',
     skills: 'Habilidades',
-    education: 'Formacion',
+    education: 'Formación académica',
     contact: 'Contacto',
   },
 };
@@ -175,30 +172,7 @@ function getTranslatedArticle(
     return directValue;
   }
 
-  const translationMap = getTranslationMapForLanguage(lang);
-  if (translationMap) {
-    const key = `article.${article.id}.${field}`;
-    const translated = translationMap[key];
-    if (translated && translated.trim().length > 0) {
-      return translated;
-    }
-  }
-
   return fallback;
-}
-
-function buildContactItems(profile: UserProfile): ContactItem[] {
-  const items: ContactItem[] = [];
-  if (profile.email) {
-    items.push({ icon: <Mail className="w-4 h-4" />, value: profile.email });
-  }
-  if (profile.phone) {
-    items.push({ icon: <Phone className="w-4 h-4" />, value: profile.phone });
-  }
-  if (profile.location) {
-    items.push({ icon: <MapPin className="w-4 h-4" />, value: profile.location });
-  }
-  return items;
 }
 
 function formatEducationTimeline(item?: EducationItem): string {
@@ -219,20 +193,15 @@ function formatEducationTimeline(item?: EducationItem): string {
   return item.period ?? '';
 }
 
-function formatEducationEntry(item?: EducationItem): string {
-  if (!item) {
-    return '';
-  }
-  const timeline = formatEducationTimeline(item);
-  const segments = [item.degree, item.institution, timeline].filter((segment) => segment && segment.trim().length > 0);
-  return segments.join(' • ');
-}
-
 const templates: TemplateOption[] = [
-  { id: 'modern', name: 'Moderno', description: 'Layout equilibrado com destaque visual.' },
-  { id: 'minimal', name: 'Minimalista', description: 'Estrutura limpa em duas colunas.' },
-  { id: 'corporate', name: 'Corporativo', description: 'Estilo formal com blocos estruturados.' },
-  { id: 'creative', name: 'Criativo', description: 'Visual ousado com acentos de cor.' },
+  { id: 'modern', name: 'Modern CV (Original)', description: 'Layout equilibrado com destaque visual.' },
+  { id: 'minimal', name: 'Minimal CV (Original)', description: 'Estrutura limpa em duas colunas.' },
+  { id: 'creative', name: 'Creative CV (Original)', description: 'Visual ousado com degradês e destaques.' },
+  { id: 'executive', name: 'Executive CV (Original)', description: 'Estilo formal com barra lateral premium.' },
+  { id: 'modernClassic', name: 'Moderno', description: 'Layout equilibrado com destaque visual e cartões modulares.' },
+  { id: 'minimalElegant', name: 'Minimalista', description: 'Estrutura limpa com colunas sutis e foco no conteúdo.' },
+  { id: 'corporate', name: 'Corporativo', description: 'Estilo formal com blocos estruturados e tons sóbrios.' },
+  { id: 'creativeAccent', name: 'Criativo', description: 'Visual ousado com acentos de cor e gradientes.' },
 ];
 
 interface CVCreatorProps {
@@ -240,13 +209,14 @@ interface CVCreatorProps {
   cvs: CV[];
   onCvsChange: (cvs: CV[]) => void;
   userProfile: UserProfile;
+  onProfileChange?: (profile: UserProfile) => void;
   projects: Project[];
   experiences: Experience[];
   articles: ScientificArticle[];
   planTier: SubscriptionPlan;
 }
 
-export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, experiences, articles, planTier }: CVCreatorProps) {
+export function CVCreator({ userId, cvs, onCvsChange, userProfile, onProfileChange, projects, experiences, articles, planTier }: CVCreatorProps) {
   const { locale, t } = useLocale();
   const languageAllowance = PLAN_LIMITS[planTier].allowedCvLanguages;
   const maxCvAllowance = PLAN_LIMITS[planTier].maxCvs;
@@ -267,11 +237,11 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
   const [selectedExperienceIds, setSelectedExperienceIds] = useState<string[]>([]);
   const [selectedArticleIds, setSelectedArticleIds] = useState<string[]>([]);
   const [drafts, setDrafts] = useState<Record<string, CvDraft>>({});
-  const [linkCopied, setLinkCopied] = useState(false);
   const [cvSaving, setCvSaving] = useState(false);
   const [cvSaved, setCvSaved] = useState(false);
   const [cvDeletingId, setCvDeletingId] = useState<string | null>(null);
   const previewRef = useRef<HTMLDivElement | null>(null);
+  const [isPreviewDialogOpen, setPreviewDialogOpen] = useState(false);
   const [languageNotice, setLanguageNotice] = useState<string | null>(null);
   const [cvNotice, setCvNotice] = useState<string | null>(null);
 
@@ -289,17 +259,17 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
   const activeCv = activeCvId === NEW_CV_ID ? null : cvs.find((cv) => cv.id === activeCvId) ?? null;
   const activeDraftKey = activeCv ? activeCv.id : NEW_CV_ID;
 
-  const createDefaultDraft = useCallback((): CvDraft => ({
+  const createDefaultDraft = useCallback((options?: { includePhoto?: boolean }): CvDraft => ({
     summary: { pt: '', en: '', es: '' },
     skills: (userProfile.skills ?? []).join(', '),
     education: Array.isArray(userProfile.education)
       ? userProfile.education
-          .map((item) => formatEducationEntry(item))
+          .map((item) => [item.institution, item.degree, formatEducationTimeline(item)].filter(Boolean).join(' • '))
           .filter((entry) => entry.length > 0)
           .join('\n')
       : '',
-    includePhoto: true,
-    template: 'modern',
+    includePhoto: options?.includePhoto ?? (userProfile.showCvPhoto !== false),
+    template: userProfile.cvTemplate ?? 'modern',
   }), [userProfile]);
 
   useEffect(() => {
@@ -309,13 +279,25 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
   }, [activeCvId, cvs]);
 
   useEffect(() => {
+    const resolvedIncludePhoto = activeCv
+      ? (typeof activeCv.showCvPhoto === 'boolean' ? activeCv.showCvPhoto : (userProfile.showCvPhoto !== false))
+      : undefined;
+
     setDrafts((prev) => {
-      if (prev[activeDraftKey]) {
+      const existing = prev[activeDraftKey];
+      if (existing) {
+        if (typeof resolvedIncludePhoto === 'boolean' && existing.includePhoto !== resolvedIncludePhoto) {
+          return { ...prev, [activeDraftKey]: { ...existing, includePhoto: resolvedIncludePhoto } };
+        }
         return prev;
       }
-      return { ...prev, [activeDraftKey]: createDefaultDraft() };
+
+      return {
+        ...prev,
+        [activeDraftKey]: createDefaultDraft(typeof resolvedIncludePhoto === 'boolean' ? { includePhoto: resolvedIncludePhoto } : undefined),
+      };
     });
-  }, [activeDraftKey, createDefaultDraft]);
+  }, [activeDraftKey, activeCv, createDefaultDraft, userProfile.showCvPhoto]);
 
   const updateDraft = useCallback((updater: (draft: CvDraft) => CvDraft) => {
     setDrafts((prev) => {
@@ -328,19 +310,21 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
     });
   }, [activeDraftKey, createDefaultDraft]);
 
-  const resolvePublicCvUrl = useCallback((): string | null => {
-    if (typeof window === 'undefined' || !userId) {
-      return null;
+  const draft = useMemo(() => {
+    const existing = drafts[activeDraftKey];
+    if (existing) {
+      return existing;
     }
-    const url = new URL(`/p/${userId}`, window.location.origin);
-    url.searchParams.set('cvLang', cvLanguage);
-    if (activeCv) {
-      url.searchParams.set('cvId', activeCv.id);
-    }
-    return url.toString();
-  }, [userId, cvLanguage, activeCv]);
 
-  const draft = useMemo(() => drafts[activeDraftKey] ?? createDefaultDraft(), [drafts, activeDraftKey, createDefaultDraft]);
+    if (activeCv) {
+      const includePhoto = typeof activeCv.showCvPhoto === 'boolean'
+        ? activeCv.showCvPhoto
+        : (userProfile.showCvPhoto !== false);
+      return createDefaultDraft({ includePhoto });
+    }
+
+    return createDefaultDraft();
+  }, [drafts, activeDraftKey, createDefaultDraft, activeCv, userProfile.showCvPhoto]);
 
   const articleOptions = useMemo(
     () => articles.filter((article) => article.showInCv !== false),
@@ -402,14 +386,9 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
     setCvNotice(null);
   }, [cvs.length, maxCvAllowance, t]);
 
-  useEffect(() => {
-    setLinkCopied(false);
-  }, [activeCvId, cvLanguage]);
-
   const sectionLabels = CV_SECTION_LABELS[cvLanguage];
 
   const summaryText = draft.summary[cvLanguage]?.trim() || getProfileField(userProfile, 'bio', cvLanguage);
-  const contactItems = useMemo(() => buildContactItems(userProfile), [userProfile]);
 
   const experiencesForPreview = useMemo(() => (
     experiences.filter((experience) => selectedExperienceIds.includes(experience.id)).map((experience) => ({
@@ -437,10 +416,6 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
         title: getTranslatedArticle(article, 'title', cvLanguage),
         summary: getTranslatedArticle(article, 'summary', cvLanguage),
         publication: getTranslatedArticle(article, 'publication', cvLanguage),
-        publicationDate: article.publicationDate ?? '',
-        authors: Array.isArray(article.authors) ? article.authors.filter(Boolean) : [],
-        link: article.link,
-        doi: article.doi,
       }))
   ), [articleOptions, selectedArticleIds, cvLanguage]);
 
@@ -452,20 +427,69 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
     return userProfile.skills ?? [];
   }, [draft.skills, userProfile.skills]);
 
-  const educationEntries = useMemo(() => {
+  const educationForPreview = useMemo(() => {
     const raw = draft.education.trim();
     if (raw) {
-      return raw.split(/\n+/).map((item) => item.trim()).filter(Boolean);
+      return raw
+        .split(/\n+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((entry) => ({ institution: entry, degree: '' }));
     }
     if (Array.isArray(userProfile.education) && userProfile.education.length > 0) {
-      return userProfile.education
-        .map((item) => formatEducationEntry(item))
-        .filter((entry) => entry.length > 0);
+      return userProfile.education;
     }
     return [];
   }, [draft.education, userProfile.education]);
 
   const selectedTemplate = draft.template;
+
+  const profileForPreview = useMemo(() => {
+    const localizedTitle = getProfileField(userProfile, 'title', cvLanguage);
+    const previewProfile: UserProfile = {
+      ...userProfile,
+      title: localizedTitle,
+      bio: summaryText,
+      skills: skillsList,
+      education: educationForPreview,
+      showCvPhoto: draft.includePhoto,
+    };
+
+    if (!draft.includePhoto) {
+      previewProfile.photoUrl = undefined;
+    }
+
+    return previewProfile;
+  }, [userProfile, cvLanguage, summaryText, skillsList, educationForPreview, draft.includePhoto]);
+
+  const persistShowCvPhotoPreference = useCallback(async (includePhoto: boolean) => {
+    if (!onProfileChange) {
+      return;
+    }
+
+    const optimisticProfile: UserProfile = { ...userProfile, showCvPhoto: includePhoto };
+    onProfileChange(optimisticProfile);
+
+    if (userId && isSupabaseConfigured) {
+      try {
+        const savedProfile = await upsertUserProfile(userId, optimisticProfile);
+        if (savedProfile) {
+          onProfileChange(savedProfile);
+        }
+      } catch (error) {
+        console.error('Failed to persist CV photo preference', error);
+      }
+    }
+  }, [onProfileChange, userProfile, userId]);
+
+  const handleIncludePhotoToggle = useCallback((checked: boolean) => {
+    updateDraft((current) => ({ ...current, includePhoto: checked }));
+    const currentPreference = userProfile.showCvPhoto !== false;
+    if (currentPreference === checked) {
+      return;
+    }
+    persistShowCvPhotoPreference(checked);
+  }, [updateDraft, userProfile.showCvPhoto, persistShowCvPhotoPreference]);
 
   const handleCreateNewCv = () => {
     if (typeof maxCvAllowance === 'number' && cvs.length >= maxCvAllowance) {
@@ -646,74 +670,7 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
       return;
     }
 
-    const publicUrl = resolvePublicCvUrl();
-    if (publicUrl) {
-      const previewWindow = window.open(publicUrl, '_blank', 'noopener,noreferrer');
-      if (!previewWindow) {
-        window.location.assign(publicUrl);
-      }
-      return;
-    }
-
-    const previewNode = previewRef.current;
-    if (!previewNode) {
-      return;
-    }
-
-    const html = buildPrintableHtml(previewNode.outerHTML);
-    const previewWindow = window.open('', '_blank', 'noopener,noreferrer,width=900,height=1200');
-    if (!previewWindow) {
-      return;
-    }
-
-    previewWindow.document.open();
-    previewWindow.document.write(html);
-    previewWindow.document.close();
-    previewWindow.focus();
-  };
-
-  const handleCopyLink = async () => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    let shareUrl = resolvePublicCvUrl();
-    if (!shareUrl) {
-      const fallbackUrl = new URL(window.location.href);
-      fallbackUrl.searchParams.set('view', 'public');
-      fallbackUrl.searchParams.set('cvLang', cvLanguage);
-      if (activeCv) {
-        fallbackUrl.searchParams.set('cvId', activeCv.id);
-      } else {
-        fallbackUrl.searchParams.delete('cvId');
-      }
-      shareUrl = fallbackUrl.toString();
-    }
-
-    try {
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
-        await navigator.clipboard.writeText(shareUrl);
-      } else {
-        const textArea = document.createElement('textarea');
-        textArea.value = shareUrl;
-        textArea.setAttribute('readonly', '');
-        textArea.style.position = 'fixed';
-        textArea.style.top = '-1000px';
-        textArea.style.left = '-1000px';
-        document.body.appendChild(textArea);
-        textArea.select();
-        const successful = document.execCommand ? document.execCommand('copy') : false;
-        textArea.remove();
-        if (!successful) {
-          throw new Error('Copy command unavailable');
-        }
-      }
-
-      setLinkCopied(true);
-      window.setTimeout(() => setLinkCopied(false), 2000);
-    } catch {
-      setLinkCopied(false);
-    }
+    setPreviewDialogOpen(true);
   };
 
   const handleSaveCv = async () => {
@@ -724,6 +681,7 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
       selectedProjects: selectedProjectIds,
       selectedExperiences: selectedExperienceIds,
       selectedArticles: selectedArticleIds,
+      showCvPhoto: draft.includePhoto,
     };
 
     if (!activeCv && typeof maxCvAllowance === 'number' && cvs.length >= maxCvAllowance) {
@@ -796,395 +754,20 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
     setTimeout(() => setCvSaved(false), 2000);
   };
 
-  const renderSectionHeading = (label: string, accent = false) => (
-    <div className="flex items-center gap-2 mb-3">
-      <div className={`w-1 h-6 rounded ${accent ? 'bg-gradient-to-b from-[#a21d4c] to-[#c92563]' : 'bg-[#d7d1e3]'}`}></div>
-      <h2 className="text-xl font-semibold text-[#1a1534]">{label}</h2>
+
+  const renderPreview = ({ attachRef }: PreviewRenderOptions = {}) => (
+    <div ref={attachRef ? previewRef : undefined}>
+      <CVRenderer
+        template={selectedTemplate}
+        profile={profileForPreview}
+        experiences={experiencesForPreview}
+        projects={projectsForPreview}
+        articles={articlesForPreview}
+        locale={cvLanguage}
+        theme={undefined}
+      />
     </div>
   );
-
-  const renderExperienceList = () => (
-    <div className="space-y-4">
-      {experiencesForPreview.map((experience) => (
-        <div key={experience.id}>
-          <h3 className="font-semibold text-[#1a1534]">{experience.title}</h3>
-          <p className="text-sm text-[#a21d4c]">{experience.company} • {experience.period}</p>
-          <p className="text-sm text-[#6b5d7a] mt-1">{experience.description}</p>
-        </div>
-      ))}
-      {experiencesForPreview.length === 0 && (
-        <p className="text-sm text-[#9b8da8]">{t('cv.selectExperiences')}</p>
-      )}
-    </div>
-  );
-
-  const renderProjectsList = () => (
-    <ul className="space-y-2 text-sm text-[#6b5d7a]">
-      {projectsForPreview.map((project) => (
-        <li key={project.id} className="flex items-start gap-2">
-          <span className="text-[#a21d4c] mt-1">•</span>
-          <span>{project.title} — {project.description}</span>
-        </li>
-      ))}
-      {projectsForPreview.length === 0 && (
-        <li className="text-sm text-[#9b8da8]">{t('cv.selectProjects')}</li>
-      )}
-    </ul>
-  );
-
-  const renderArticlesList = () => (
-    <div className="space-y-3">
-      {articlesForPreview.map((article) => {
-        const metadata: string[] = [];
-        if (article.authors.length > 0) {
-          metadata.push(article.authors.join(', '));
-        }
-        if (article.publication) {
-          metadata.push(article.publication);
-        }
-        if (article.publicationDate) {
-          metadata.push(article.publicationDate);
-        }
-
-        return (
-          <div key={article.id} className="text-sm text-[#6b5d7a] space-y-1">
-            <h3 className="font-semibold text-[#1a1534]">{article.title}</h3>
-            {metadata.length > 0 && (
-              <p className="text-xs text-[#a21d4c]">{metadata.join(' • ')}</p>
-            )}
-            {article.summary && (
-              <p className="text-sm text-[#6b5d7a] leading-relaxed">{article.summary}</p>
-            )}
-          </div>
-        );
-      })}
-      {articlesForPreview.length === 0 && (
-        <p className="text-sm text-[#9b8da8]">{t('cv.articlesEmpty')}</p>
-      )}
-    </div>
-  );
-
-  const renderSkillsChips = () => (
-    <div className="flex flex-wrap gap-2">
-      {skillsList.map((skill) => (
-        <span
-          key={skill}
-          className="px-3 py-1 rounded-full text-sm bg-gradient-to-r from-[#a21d4c]/10 to-[#c92563]/10 text-[#a21d4c]"
-        >
-          {skill}
-        </span>
-      ))}
-      {skillsList.length === 0 && (
-        <span className="text-sm text-[#9b8da8]">{t('cv.skills')}</span>
-      )}
-    </div>
-  );
-
-  const renderEducationList = () => (
-    <div className="space-y-2">
-      {educationEntries.map((entry, index) => (
-        <p key={`${entry}-${index}`} className="text-sm text-[#6b5d7a]">{entry}</p>
-      ))}
-      {educationEntries.length === 0 && (
-        <p className="text-sm text-[#9b8da8]">{t('cv.education')}</p>
-      )}
-    </div>
-  );
-
-  const profileTitle = getProfileField(userProfile, 'title', cvLanguage);
-
-  const renderModernTemplate = () => (
-    <div ref={previewRef} className="bg-white border-2 border-[#e8e3f0] rounded-lg p-8 shadow-lg" id="cv-preview">
-      <div className="max-w-2xl mx-auto">
-        <div className="flex items-start gap-6 mb-8 pb-6 border-b-2 border-[#e8e3f0]">
-          {draft.includePhoto && (
-            <div className="w-24 h-24 rounded-full bg-gradient-to-r from-[#a21d4c] to-[#c92563] flex items-center justify-center text-white text-2xl font-bold flex-shrink-0 overflow-hidden">
-              {userProfile.photoUrl ? (
-                <img src={userProfile.photoUrl} alt={userProfile.fullName} className="w-full h-full object-cover" />
-              ) : (
-                userProfile.fullName
-                  .split(' ')
-                  .filter(Boolean)
-                  .slice(0, 2)
-                  .map((chunk) => chunk[0]?.toUpperCase())
-                  .join('')
-              )}
-            </div>
-          )}
-          <div className="flex-1">
-            <h1 className="text-3xl font-bold text-[#1a1534] mb-2">{userProfile.fullName}</h1>
-            <p className="text-lg text-[#a21d4c] mb-3">{profileTitle}</p>
-            <div className="text-sm text-[#6b5d7a] space-y-1">
-              {contactItems.map((item, index) => (
-                <p key={`${item.value}-${index}`} className="flex items-center gap-2">
-                  {item.icon}
-                  <span>{item.value}</span>
-                </p>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <section className="mb-6">
-          {renderSectionHeading(sectionLabels.summary, true)}
-          <p className="text-[#6b5d7a] text-sm leading-relaxed">{summaryText}</p>
-        </section>
-
-        <section className="mb-6">
-          {renderSectionHeading(sectionLabels.experience, true)}
-          {renderExperienceList()}
-        </section>
-
-        <section className="mb-6">
-          {renderSectionHeading(sectionLabels.projects, true)}
-          {renderProjectsList()}
-        </section>
-
-        <section className="mb-6">
-          {renderSectionHeading(sectionLabels.articles, true)}
-          {renderArticlesList()}
-        </section>
-
-        <section className="mb-6">
-          {renderSectionHeading(sectionLabels.skills, true)}
-          {renderSkillsChips()}
-        </section>
-
-        <section>
-          {renderSectionHeading(sectionLabels.education, true)}
-          {renderEducationList()}
-        </section>
-      </div>
-    </div>
-  );
-
-  const renderMinimalTemplate = () => (
-    <div ref={previewRef} className="bg-white border border-[#e8e3f0] rounded-lg p-8 shadow-md" id="cv-preview">
-      <div className="grid gap-8 md:grid-cols-[0.85fr_1.15fr]">
-        <aside className="space-y-8 border-r border-[#f0edf5] pr-6">
-          <div>
-            <h1 className="text-2xl font-bold text-[#1a1534]">{userProfile.fullName}</h1>
-            <p className="text-sm text-[#a21d4c]">{profileTitle}</p>
-          </div>
-
-          <div>
-            <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9b8da8] mb-3">{sectionLabels.contact}</h3>
-            <div className="space-y-2 text-sm text-[#6b5d7a]">
-              {contactItems.map((item, index) => (
-                <p key={`${item.value}-${index}`} className="flex items-center gap-2">
-                  {item.icon}
-                  <span>{item.value}</span>
-                </p>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9b8da8] mb-3">{sectionLabels.skills}</h3>
-            {renderSkillsChips()}
-          </div>
-
-          <div>
-            <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-[#9b8da8] mb-3">{sectionLabels.education}</h3>
-            {renderEducationList()}
-          </div>
-        </aside>
-
-        <main className="space-y-8">
-          <section>
-            <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.summary}</h2>
-            <p className="text-sm text-[#6b5d7a] leading-relaxed">{summaryText}</p>
-          </section>
-
-          <section>
-            <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.experience}</h2>
-            {renderExperienceList()}
-          </section>
-
-          <section>
-            <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.projects}</h2>
-            {renderProjectsList()}
-          </section>
-
-          <section>
-            <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.articles}</h2>
-            {renderArticlesList()}
-          </section>
-        </main>
-      </div>
-    </div>
-  );
-
-  const renderCorporateTemplate = () => (
-    <div ref={previewRef} className="bg-white border border-[#dcd6e6] rounded-lg shadow p-8" id="cv-preview">
-      <header className="mb-8">
-        <div className="flex flex-wrap items-baseline justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold text-[#1a1534]">{userProfile.fullName}</h1>
-            <p className="text-base text-[#a21d4c]">{profileTitle}</p>
-          </div>
-          <div className="text-sm text-[#6b5d7a] space-y-1">
-            {contactItems.map((item, index) => (
-              <p key={`${item.value}-${index}`} className="flex items-center gap-2 justify-end">
-                {item.icon}
-                <span>{item.value}</span>
-              </p>
-            ))}
-          </div>
-        </div>
-      </header>
-
-      <section className="mb-6">
-        <div className="uppercase tracking-[0.3em] text-xs text-[#9b8da8] mb-2">{sectionLabels.summary}</div>
-        <div className="bg-[#f8f7fa] border border-[#e8e3f0] rounded-lg p-4">
-          <p className="text-sm text-[#4d415a] leading-relaxed">{summaryText}</p>
-        </div>
-      </section>
-
-      <section className="mb-6">
-        <div className="uppercase tracking-[0.3em] text-xs text-[#9b8da8] mb-2">{sectionLabels.experience}</div>
-        <div className="space-y-4">
-          {renderExperienceList()}
-        </div>
-      </section>
-
-      <section className="mb-6">
-        <div className="uppercase tracking-[0.3em] text-xs text-[#9b8da8] mb-2">{sectionLabels.articles}</div>
-        <div className="space-y-4">
-          {renderArticlesList()}
-        </div>
-      </section>
-
-      <div className="grid gap-6 md:grid-cols-2">
-        <section>
-          <div className="uppercase tracking-[0.3em] text-xs text-[#9b8da8] mb-2">{sectionLabels.projects}</div>
-          {renderProjectsList()}
-        </section>
-        <section>
-          <div className="uppercase tracking-[0.3em] text-xs text-[#9b8da8] mb-2">{sectionLabels.skills}</div>
-          {renderSkillsChips()}
-          <div className="mt-6">
-            <div className="uppercase tracking-[0.3em] text-xs text-[#9b8da8] mb-2">{sectionLabels.education}</div>
-            {renderEducationList()}
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-
-  const renderCreativeTemplate = () => (
-    <div ref={previewRef} className="bg-gradient-to-br from-[#fdf2f7] via-[#f7f3ff] to-[#eef2ff] rounded-2xl p-8 shadow-xl" id="cv-preview">
-      <div className="bg-white/80 backdrop-blur border border-white/60 rounded-xl p-6">
-        <header className="flex flex-wrap items-start justify-between gap-6 mb-8">
-          <div>
-            <h1 className="text-3xl font-extrabold text-[#1a1534] tracking-tight">{userProfile.fullName}</h1>
-            <p className="text-lg text-[#a21d4c]">{profileTitle}</p>
-          </div>
-          <div className="flex flex-col gap-2 text-sm text-[#6b5d7a]">
-            {contactItems.map((item, index) => (
-              <span key={`${item.value}-${index}`} className="flex items-center gap-2 bg-white/70 border border-white rounded-full px-3 py-1">
-                {item.icon}
-                {item.value}
-              </span>
-            ))}
-          </div>
-        </header>
-
-        <section className="mb-6">
-          <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.summary}</h2>
-          <p className="text-sm text-[#4d415a] leading-relaxed">{summaryText}</p>
-        </section>
-
-        <section className="mb-6">
-          <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.experience}</h2>
-          <div className="space-y-4">
-            {experiencesForPreview.map((experience) => (
-              <div key={experience.id} className="bg-white/80 border border-white rounded-lg p-4">
-                <h3 className="font-semibold text-[#1a1534]">{experience.title}</h3>
-                <p className="text-sm text-[#a21d4c]">{experience.company} • {experience.period}</p>
-                <p className="text-sm text-[#6b5d7a] mt-2">{experience.description}</p>
-              </div>
-            ))}
-            {experiencesForPreview.length === 0 && (
-              <p className="text-sm text-[#9b8da8]">{t('cv.selectExperiences')}</p>
-            )}
-          </div>
-        </section>
-
-        <section className="mb-6">
-          <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.projects}</h2>
-          <div className="space-y-3">
-            {projectsForPreview.map((project) => (
-              <div key={project.id} className="bg-white/80 border border-white rounded-lg p-4">
-                <h3 className="font-semibold text-[#a21d4c]">{project.title}</h3>
-                <p className="text-sm text-[#6b5d7a] mt-1">{project.description}</p>
-              </div>
-            ))}
-            {projectsForPreview.length === 0 && (
-              <p className="text-sm text-[#9b8da8]">{t('cv.selectProjects')}</p>
-            )}
-          </div>
-        </section>
-
-        <section className="mb-6">
-          <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.articles}</h2>
-          <div className="space-y-3">
-            {articlesForPreview.map((article) => {
-              const metadata: string[] = [];
-              if (article.authors.length > 0) {
-                metadata.push(article.authors.join(', '));
-              }
-              if (article.publication) {
-                metadata.push(article.publication);
-              }
-              if (article.publicationDate) {
-                metadata.push(article.publicationDate);
-              }
-              return (
-                <div key={article.id} className="bg-white/80 border border-white rounded-lg p-4">
-                  <h3 className="font-semibold text-[#a21d4c]">{article.title}</h3>
-                  {metadata.length > 0 && (
-                    <p className="text-xs text-[#a21d4c] mt-1">{metadata.join(' • ')}</p>
-                  )}
-                  {article.summary && (
-                    <p className="text-sm text-[#6b5d7a] mt-2">{article.summary}</p>
-                  )}
-                </div>
-              );
-            })}
-            {articlesForPreview.length === 0 && (
-              <p className="text-sm text-[#9b8da8]">{t('cv.articlesEmpty')}</p>
-            )}
-          </div>
-        </section>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <section>
-            <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.skills}</h2>
-            {renderSkillsChips()}
-          </section>
-          <section>
-            <h2 className="text-lg font-semibold text-[#1a1534] mb-2">{sectionLabels.education}</h2>
-            {renderEducationList()}
-          </section>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderPreview = () => {
-    switch (selectedTemplate) {
-      case 'minimal':
-        return renderMinimalTemplate();
-      case 'corporate':
-        return renderCorporateTemplate();
-      case 'creative':
-        return renderCreativeTemplate();
-      case 'modern':
-      default:
-        return renderModernTemplate();
-    }
-  };
 
   return (
     <div className="p-8">
@@ -1302,7 +885,7 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
                     <input
                       type="checkbox"
                       checked={draft.includePhoto}
-                      onChange={(event) => updateDraft((current) => ({ ...current, includePhoto: event.target.checked }))}
+                      onChange={(event) => handleIncludePhotoToggle(event.target.checked)}
                       className="sr-only peer"
                     />
                     <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-[#a21d4c]/20 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#a21d4c]"></div>
@@ -1441,10 +1024,6 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
                 <Eye className="w-5 h-5 mr-2" />
                 {t('cv.preview')}
               </Button>
-              <Button variant="outline" className="w-full" onClick={handleCopyLink}>
-                <Globe className="w-5 h-5 mr-2" />
-                {linkCopied ? t('cv.copyLink') : t('cv.link')}
-              </Button>
               {cvSaved && (
                 <p className="text-sm text-green-600">{t('cv.saved')}</p>
               )}
@@ -1491,10 +1070,37 @@ export function CVCreator({ userId, cvs, onCvsChange, userProfile, projects, exp
                 {t('cv.templateLabel')}: {templates.find((template) => template.id === selectedTemplate)?.name}
               </span>
             </div>
-            {renderPreview()}
+            <div className="relative">
+              <div className="lg:sticky lg:top-16">
+                {/* Keep the preview anchored while scrolling through the form */}
+                <div className="relative mx-auto max-w-[230mm] px-2 sm:px-6 pb-10">
+                  <div className="pointer-events-none absolute -inset-6 -z-10 rounded-[48px] bg-gradient-to-br from-[#a21d4c]/14 via-transparent to-[#2d2550]/12 blur-3xl" />
+                  <div className="relative">
+                    {renderPreview({ attachRef: true })}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
+
+      <Dialog open={isPreviewDialogOpen} onOpenChange={setPreviewDialogOpen}>
+        <DialogContent className="w-full max-w-[92vw] sm:max-w-[250mm] md:max-w-[260mm] max-h-[96vh] gap-0 overflow-hidden border-none bg-[#f8f7fa] p-0 shadow-2xl grid-rows-[auto_minmax(0,1fr)]">
+          <DialogHeader className="border-b border-[#e8e3f0] px-6 py-4">
+            <DialogTitle className="text-2xl font-bold text-[#1a1534]">{t('cv.previewTitle')}</DialogTitle>
+          </DialogHeader>
+          <div className="flex min-h-0 flex-col overflow-hidden px-6 py-8">
+            <div className="flex-1 overflow-y-auto">
+              <div className="pb-6">
+                <div className="mx-auto max-w-[250mm] md:max-w-[255mm] lg:max-w-[260mm] origin-top scale-[1.04]">
+                  {renderPreview()}
+                </div>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

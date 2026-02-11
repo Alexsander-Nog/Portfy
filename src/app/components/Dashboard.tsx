@@ -83,6 +83,7 @@ interface DashboardProps {
   userEmail?: string;
   accountCreatedAt?: string;
   onLocalePersist?: (locale: Locale) => Promise<void> | void;
+  onStartCheckout?: (plan: SubscriptionPlan) => void;
 }
 
 export function Dashboard(props: DashboardProps) {
@@ -109,6 +110,7 @@ export function Dashboard(props: DashboardProps) {
     userEmail,
     accountCreatedAt,
     onLocalePersist,
+    onStartCheckout,
   } = props;
   const planTier = (subscription?.planTier ?? 'pro') as SubscriptionPlan;
   const planLimits = PLAN_LIMITS[planTier];
@@ -283,18 +285,24 @@ export function Dashboard(props: DashboardProps) {
 
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && userId) {
-      setShareLink(`${window.location.origin}/p/${userId}`);
+    const slugIdentifier = userProfile.slug?.trim() ?? '';
+    const rawUserId = userId?.trim() ?? '';
+    const pathIdentifier = slugIdentifier || rawUserId;
+
+    if (!pathIdentifier) {
+      setShareLink('');
       return;
     }
 
-    if (userId) {
-      setShareLink(`/p/${userId}`);
+    if (typeof window !== 'undefined') {
+      const url = new URL(`/p/${encodeURIComponent(pathIdentifier)}`, window.location.origin);
+      setShareLink(url.toString());
       return;
     }
 
-    setShareLink('');
-  }, [userId]);
+    const fallback = `/p/${encodeURIComponent(pathIdentifier)}`;
+    setShareLink(fallback);
+  }, [userId, userProfile.slug]);
 
   useEffect(() => {
     return () => {
@@ -308,6 +316,30 @@ export function Dashboard(props: DashboardProps) {
     setShareLinkCopied(false);
     setShareLinkError(null);
   }, [shareLink]);
+
+  const handleOpenPublicPortfolio = () => {
+    const slugIdentifier = userProfile.slug?.trim() ?? '';
+    const rawUserId = userId?.trim() ?? '';
+    const pathIdentifier = slugIdentifier || rawUserId;
+
+    if (typeof window === 'undefined') {
+      onViewPublicPortfolio?.();
+      return;
+    }
+
+    if (!pathIdentifier) {
+      onViewPublicPortfolio?.();
+      return;
+    }
+
+    const url = new URL(`/p/${encodeURIComponent(pathIdentifier)}`, window.location.origin);
+
+    setShareLinkError(null);
+    const external = window.open(url.toString(), '_blank', 'noopener,noreferrer');
+    if (!external) {
+      setShareLinkError(t('portfolio.share.error'));
+    }
+  };
   const resetProjectForm = () => {
     setProjectForm({
       title: '',
@@ -1210,7 +1242,7 @@ export function Dashboard(props: DashboardProps) {
         console.log('Estado atualizado!');
       } else {
         console.log('Salvando localmente (Supabase não configurado)');
-        onProfileChange({ id: userProfile.id, ...payload });
+        onProfileChange({ ...userProfile, ...payload });
       }
 
       setProfileSaving(false);
@@ -1368,7 +1400,7 @@ export function Dashboard(props: DashboardProps) {
           <Button 
             variant="outline" 
             className="justify-start"
-            onClick={onViewPublicPortfolio}
+            onClick={handleOpenPublicPortfolio}
           >
             <ExternalLink className="w-5 h-5 mr-2" />
             {t('dash.viewPublic')}
@@ -1408,15 +1440,21 @@ export function Dashboard(props: DashboardProps) {
               readOnly
               className="w-full min-w-0 rounded-md border border-[#e8e3f0] bg-[#f7f5fb] px-3 py-2 text-sm text-[#2d2550] focus:outline-none focus:ring-2 focus:ring-[#c92563]"
             />
-            <Button
-              variant="outline"
-              className="whitespace-nowrap"
-              onClick={handleCopyShareLink}
-              disabled={!shareLink}
-            >
-              <LinkIcon className="mr-2 h-4 w-4" />
-              {shareLinkCopied ? t('portfolio.share.copied') : t('portfolio.share.copy')}
-            </Button>
+            <div className="flex flex-shrink-0 flex-col gap-2 md:flex-row">
+              <Button className="whitespace-nowrap" onClick={handleOpenPublicPortfolio}>
+                <ExternalLink className="mr-2 h-4 w-4" />
+                {t('portfolio.share.open')}
+              </Button>
+              <Button
+                variant="outline"
+                className="whitespace-nowrap"
+                onClick={handleCopyShareLink}
+                disabled={!shareLink}
+              >
+                <LinkIcon className="mr-2 h-4 w-4" />
+                {shareLinkCopied ? t('portfolio.share.copied') : t('portfolio.share.copy')}
+              </Button>
+            </div>
           </div>
         </div>
         {shareLinkError ? (
@@ -3284,6 +3322,7 @@ export function Dashboard(props: DashboardProps) {
             cvs={props.cvs}
             onCvsChange={props.onCvsChange}
             userProfile={userProfile}
+            onProfileChange={onProfileChange}
             projects={projects}
             experiences={experiences}
             articles={articles}
@@ -3329,6 +3368,7 @@ export function Dashboard(props: DashboardProps) {
             planTier={planTier}
             planLimits={planLimits}
             counts={planUsage}
+            onStartCheckout={onStartCheckout}
           />
         );
       }
@@ -3344,6 +3384,7 @@ export function Dashboard(props: DashboardProps) {
       onLogout={onLogout}
       userProfile={userProfile}
       subscription={subscription}
+      onStartCheckout={onStartCheckout}
     >
       {renderContent()}
     </DashboardLayout>

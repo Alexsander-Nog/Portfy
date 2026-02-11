@@ -17,20 +17,11 @@ import {
 } from 'lucide-react';
 import { Button } from './Button';
 import { Card } from './Card';
+import { PlanCard } from './PlanCard';
+import { useLocale } from '../i18n';
 import type { Subscription as SubscriptionType, SubscriptionPlan, UserProfile } from '../types';
+import { PLAN_CATALOG, PLAN_SEQUENCE } from '../data/planCatalog';
 import type { PlanLimits } from '../data/plans';
-
-type PlanCatalogEntry = {
-  id: SubscriptionPlan;
-  name: string;
-  price: string;
-  period: string;
-  icon: LucideIcon;
-  color: string;
-  features: string[];
-  highlight?: string;
-  popular?: boolean;
-};
 
 type PlanUsageStat = {
   key: string;
@@ -45,64 +36,6 @@ type StatusCallout = {
   icon: LucideIcon;
   className: string;
   iconClass: string;
-};
-
-const PLAN_CATALOG: Record<SubscriptionPlan, PlanCatalogEntry> = {
-  basic: {
-    id: 'basic',
-    name: 'Basic',
-    price: 'R$ 19',
-    period: '/mês',
-    icon: Shield,
-    color: 'from-[#6b5d7a] to-[#9b8da8]',
-    highlight: 'Ideal para começar a construir seu portfólio.',
-    features: [
-      '1 portfólio profissional',
-      'Até 10 projetos',
-      'CV em 1 idioma',
-      '1 vídeo em destaque',
-      '2 cores personalizadas',
-      'Suporte por email',
-    ],
-  },
-  pro: {
-    id: 'pro',
-    name: 'Pro',
-    price: 'R$ 39',
-    period: '/mês',
-    icon: Star,
-    color: 'from-[#a21d4c] to-[#c92563]',
-    highlight: 'Recursos avançados para profissionais.',
-    popular: true,
-    features: [
-      '3 portfólios profissionais',
-      'Projetos ilimitados',
-      'CV em até 3 idiomas',
-      '3 vídeos em destaque',
-      '4 cores personalizadas',
-      'Personalização de tipografia',
-      'Análises completas',
-    ],
-  },
-  premium: {
-    id: 'premium',
-    name: 'Premium',
-    price: 'R$ 69',
-    period: '/mês',
-    icon: Crown,
-    color: 'from-[#2d2550] to-[#5a4570]',
-    highlight: 'Experiência completa e suporte dedicado.',
-    features: [
-      'Até 10 portfólios profissionais',
-      'Projetos ilimitados',
-      'CV em todos os idiomas',
-      'Vídeos em destaque ilimitados',
-      'Personalização total do tema',
-      'Domínio personalizado',
-      'Integrações avançadas',
-      'Suporte prioritário 24/7',
-    ],
-  },
 };
 
 const STATUS_LABELS: Record<SubscriptionType['status'], string> = {
@@ -142,6 +75,12 @@ const STATUS_CALLOUTS: Partial<Record<SubscriptionType['status'], StatusCallout>
     className: 'bg-[#f0f4ff] border border-[#98b4f5]',
     iconClass: 'text-[#415fc1]',
   },
+};
+
+const PLAN_ICONS: Record<SubscriptionPlan, LucideIcon> = {
+  basic: Shield,
+  pro: Star,
+  premium: Crown,
 };
 
 const formatDate = (isoDate?: string | null, fallback = 'Não disponível') => {
@@ -217,15 +156,27 @@ interface SubscriptionProps {
   userProfile?: UserProfile;
   userEmail?: string;
   accountCreatedAt?: string;
+  onStartCheckout?: (planId: SubscriptionPlan) => Promise<void> | void;
 }
 
 export function Subscription(props: SubscriptionProps) {
-  const { subscription, planTier, planLimits, counts, userId, userProfile, userEmail, accountCreatedAt } = props;
-  const [checkoutLoading, setCheckoutLoading] = useState<SubscriptionPlan | null>(null);
+  const {
+    subscription,
+    planTier,
+    planLimits,
+    counts,
+    userId,
+    userProfile,
+    userEmail,
+    accountCreatedAt,
+    onStartCheckout,
+  } = props;
+  const { t } = useLocale();
+  const [processingPlan, setProcessingPlan] = useState<SubscriptionPlan | null>(null);
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
 
   const currentPlan = PLAN_CATALOG[planTier];
-  const PlanIcon = currentPlan.icon;
+  const PlanIcon = PLAN_ICONS[currentPlan.id] ?? Star;
   const statusLabel = subscription ? STATUS_LABELS[subscription.status] ?? 'Indefinido' : 'Sem assinatura';
   const isTrial = subscription?.status === 'trialing';
   const trialLabel = formatTrialLabel(isTrial, subscription?.trialEndsAt);
@@ -242,40 +193,82 @@ export function Subscription(props: SubscriptionProps) {
     { key: 'featuredVideos', label: 'Vídeos em destaque', value: formatUsageValue(counts.featuredVideos, planLimits.maxFeaturedVideos), progress: computeProgress(counts.featuredVideos, planLimits.maxFeaturedVideos) },
   ];
 
-  const handleCheckout = async (planId: SubscriptionPlan) => {
-    if (planId === planTier) {
-      return;
+  const PLAN_SEQUENCE: SubscriptionPlan[] = ['basic', 'pro', 'premium'];
+  const tierIndex = Math.max(0, PLAN_SEQUENCE.indexOf(planTier));
+  const trialExpired = subscription?.planType === 'trial' && (subscription.trialExpired ?? false);
+  const trialActive = subscription?.planType === 'trial' && !trialExpired;
+
+  const getPlanCta = (planId: SubscriptionPlan) => {
+    const planIndex = Math.max(0, PLAN_SEQUENCE.indexOf(planId));
+
+    if (trialExpired) {
+      return {
+        label: t('subscription.buttons.subscribeNow'),
+        disabled: false,
+      };
     }
-    if (!userId) {
-      setCheckoutError('Faça login para continuar.');
+
+    if (trialActive) {
+      if (planId === planTier) {
+        return {
+          label: t('subscription.buttons.continueTrial'),
+          disabled: true,
+        };
+      }
+
+      if (planIndex > tierIndex) {
+        return {
+          label: t('subscription.buttons.upgrade'),
+          disabled: false,
+        };
+      }
+
+      return {
+        label: t('subscription.buttons.subscribe'),
+        disabled: false,
+      };
+    }
+
+    if (planId === planTier) {
+      return {
+        label: t('subscription.buttons.current'),
+        disabled: true,
+      };
+    }
+
+    if (planIndex > tierIndex) {
+      return {
+        label: t('subscription.buttons.upgrade'),
+        disabled: false,
+      };
+    }
+
+    return {
+      label: t('subscription.buttons.subscribe'),
+      disabled: false,
+    };
+  };
+
+  const handleCheckout = async (planId: SubscriptionPlan) => {
+    if (!onStartCheckout) {
+      setCheckoutError(t('subscription.errors.checkoutUnavailable'));
       return;
     }
 
-    setCheckoutLoading(planId);
+    if (processingPlan) {
+      return;
+    }
+
     setCheckoutError(null);
+    setProcessingPlan(planId);
 
     try {
-      const response = await fetch('/api/mercadopago/create-preference', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planId, userId }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || 'Falha ao iniciar pagamento');
-      }
-
-      const data = await response.json();
-      const redirectUrl = data.init_point || data.sandbox_init_point;
-      if (!redirectUrl) {
-        throw new Error('URL de pagamento não disponível');
-      }
-      window.location.href = redirectUrl;
+      await onStartCheckout(planId);
     } catch (error) {
-      setCheckoutError(error instanceof Error ? error.message : 'Falha no pagamento');
+      const message = error instanceof Error ? error.message : t('subscription.errors.generic');
+      setCheckoutError(message);
     } finally {
-      setCheckoutLoading(null);
+      setProcessingPlan(null);
     }
   };
 
@@ -444,62 +437,31 @@ export function Subscription(props: SubscriptionProps) {
         <h2 className="text-2xl font-bold text-[#1a1534] mb-2">Planos disponíveis</h2>
         <p className="text-[#6b5d7a] mb-6">Compare os planos e faça upgrade quando quiser.</p>
 
-        <div className="grid md:grid-cols-3 gap-6">
+        <div className="mt-6 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
           {Object.values(PLAN_CATALOG).map((plan) => {
-            const Icon = plan.icon;
-            const isCurrentPlan = plan.id === planTier;
+            const { label, disabled } = getPlanCta(plan.id);
+            const isProcessing = processingPlan === plan.id;
+            const isCurrentPlan = plan.id === planTier && subscription?.planType !== 'trial';
+            const ctaDisabled = disabled || (processingPlan !== null && processingPlan !== plan.id);
 
             return (
-              <Card
+              <PlanCard
                 key={plan.id}
-                className={`relative ${plan.popular ? 'border-2 border-[#a21d4c] shadow-xl' : ''} ${
-                  isCurrentPlan ? 'ring-2 ring-[#a21d4c] ring-offset-2' : ''
-                }`}
-              >
-                {plan.popular && (
-                  <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-[#a21d4c] to-[#c92563] text-white px-4 py-1 rounded-full text-sm flex items-center gap-1">
-                    <Star className="w-4 h-4" />
-                    Mais Popular
-                  </div>
-                )}
-
-                {isCurrentPlan && (
-                  <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-gradient-to-r from-[#2d2550] to-[#5a4570] text-white px-4 py-1 rounded-full text-sm flex items-center gap-1">
-                    <Check className="w-4 h-4" />
-                    Plano atual
-                  </div>
-                )}
-
-                <div className="text-center mb-6">
-                  <div className={`w-16 h-16 mx-auto mb-4 rounded-xl bg-gradient-to-r ${plan.color} flex items-center justify-center`}>
-                    <Icon className="w-8 h-8 text-white" />
-                  </div>
-                  <h3 className="text-2xl font-bold text-[#1a1534] mb-2">{plan.name}</h3>
-                  <div className="mb-4">
-                    <span className="text-4xl font-bold text-[#2d2550]">{plan.price}</span>
-                    <span className="text-[#6b5d7a]">{plan.period}</span>
-                  </div>
-                  {plan.highlight && <p className="text-sm text-[#6b5d7a]">{plan.highlight}</p>}
-                </div>
-
-                <ul className="space-y-3 mb-6">
-                  {plan.features.map((feature) => (
-                    <li key={feature} className="flex items-start gap-2 text-sm text-[#6b5d7a]">
-                      <Check className="w-5 h-5 text-[#a21d4c] flex-shrink-0 mt-0.5" />
-                      <span>{feature}</span>
-                    </li>
-                  ))}
-                </ul>
-
-                <Button
-                  variant={plan.popular ? 'primary' : 'outline'}
-                  className="w-full"
-                  onClick={() => handleCheckout(plan.id)}
-                  disabled={isCurrentPlan || Boolean(checkoutLoading)}
-                >
-                  {isCurrentPlan ? 'Plano atual' : plan.id === 'premium' ? 'Fazer upgrade' : 'Selecionar plano'}
-                </Button>
-              </Card>
+                planId={plan.id}
+                name={plan.name}
+                description={plan.highlight}
+                price={plan.price}
+                period={plan.period}
+                features={plan.features}
+                highlight={plan.highlight}
+                badge={plan.popular ? t('pricing.mostPopular') : undefined}
+                isPopular={plan.popular}
+                ctaLabel={isProcessing ? t('subscription.buttons.loading') : label}
+                ctaLoading={isProcessing}
+                ctaDisabled={ctaDisabled}
+                onSelect={handleCheckout}
+                footnote={isCurrentPlan ? t('subscription.plan.currentFootnote') : undefined}
+              />
             );
           })}
         </div>

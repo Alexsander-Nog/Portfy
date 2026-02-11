@@ -13,6 +13,10 @@ create table if not exists public.profiles (
   skills text[] not null default '{}',
   education jsonb,
   translations jsonb default '{}'::jsonb,
+  theme_template text not null default 'modern',
+  cv_template text not null default 'modern',
+  trial_start timestamptz not null default now(),
+  trial_end timestamptz not null default (now() + interval '15 days'),
   preferred_locale text not null default 'pt' check (preferred_locale in ('pt','en','es')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -118,7 +122,11 @@ create table if not exists public.subscriptions (
   id uuid primary key default uuid_generate_v4(),
   user_id uuid not null references auth.users on delete cascade,
   status text not null default 'trialing',
+  plan_type text not null default 'trial',
   plan_tier text not null default 'basic' check (plan_tier in ('basic','pro','premium')),
+  subscription_active boolean not null default true,
+  trial_start timestamptz not null default now(),
+  trial_end timestamptz not null default (now() + interval '15 days'),
   trial_ends_at timestamptz,
   current_period_end timestamptz,
   grace_days integer not null default 3,
@@ -152,6 +160,18 @@ alter table public.profiles
 alter table public.profiles
   add column if not exists preferred_locale text not null default 'pt' check (preferred_locale in ('pt','en','es'));
 
+alter table public.profiles
+  add column if not exists theme_template text not null default 'modern';
+
+alter table public.profiles
+  add column if not exists cv_template text not null default 'modern';
+
+alter table public.profiles
+  add column if not exists trial_start timestamptz not null default now();
+
+alter table public.profiles
+  add column if not exists trial_end timestamptz not null default (now() + interval '15 days');
+
 create policy "user_themes_read_own" on public.user_themes
   for select using (auth.uid() = user_id);
 create policy "user_themes_write_own" on public.user_themes
@@ -164,6 +184,18 @@ alter table public.user_themes
 
 alter table public.user_themes
   add column if not exists layout text not null default 'modern';
+
+alter table public.subscriptions
+  add column if not exists plan_type text not null default 'trial';
+
+alter table public.subscriptions
+  add column if not exists subscription_active boolean not null default true;
+
+alter table public.subscriptions
+  add column if not exists trial_start timestamptz not null default now();
+
+alter table public.subscriptions
+  add column if not exists trial_end timestamptz not null default (now() + interval '15 days');
 
 create policy "featured_videos_read_own" on public.featured_videos
   for select using (auth.uid() = user_id);

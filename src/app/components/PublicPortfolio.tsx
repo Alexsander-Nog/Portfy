@@ -20,112 +20,148 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { ImageWithFallback } from './figma/ImageWithFallback';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from './ui/dialog';
+  fetchCvs,
+  fetchExperiences,
+  fetchFeaturedVideos,
+  fetchProjects,
+  fetchScientificArticles,
+  fetchUserProfile,
+  fetchUserProfileBySlug,
+  fetchUserTheme,
+} from '../data/portfolio';
+import { Button } from './Button';
+import { ImageWithFallback } from './figma/ImageWithFallback';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { useLocale } from '../i18n';
-import type { CV, EducationItem, Experience, FeaturedVideo, Project, ScientificArticle, UserProfile, UserTheme } from '../types';
+import type {
+  CV,
+  EducationItem,
+  Experience,
+  FeaturedVideo,
+  Project,
+  ScientificArticle,
+  UserProfile,
+  UserTheme,
+} from '../types';
 
-type LanguageStyle = {
-  backgroundColor: string;
-  color: string;
-  borderColor?: string;
-  opacity?: number;
+type LayoutVariant = NonNullable<UserTheme['layout']>;
+type ThemeSnapshot = Required<
+  Pick<UserTheme, 'primaryColor' | 'secondaryColor' | 'accentColor' | 'backgroundColor' | 'fontFamily' | 'themeMode' | 'layout'>
+>;
+type CvLabelKey = 'title' | 'summary' | 'experience' | 'projects' | 'articles' | 'education' | 'skills' | 'contact';
+type CvLabelRecord = Record<CvLabelKey, string>;
+
+const DEFAULT_THEME: ThemeSnapshot = {
+  primaryColor: '#a21d4c',
+  secondaryColor: '#c92563',
+  accentColor: '#e94d7a',
+  backgroundColor: '#ffffff',
+  fontFamily: 'Inter, system-ui, sans-serif',
+  themeMode: 'light',
+  layout: 'modern',
 };
 
-type ButtonStyle = {
-  border: string;
-  color: string;
-  backgroundColor: string;
+const heroCardLayouts = new Set<LayoutVariant>(['modern', 'minimal', 'list', 'masonry', 'spotlight', 'editorial']);
+const heroSummaryLayouts = new Set<LayoutVariant>(['minimal', 'list', 'spotlight', 'editorial']);
+const heroParticleLayouts = new Set<LayoutVariant>(['spotlight', 'masonry']);
+
+const HEX_COLOR_REGEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
+const normalizeHexColor = (value: string | undefined, fallback: string): string => {
+  if (!value) {
+    return fallback;
+  }
+  const trimmed = value.trim();
+  return HEX_COLOR_REGEX.test(trimmed) ? trimmed : fallback;
 };
 
-type MediaEmbed = {
-  src: string;
-  platform: 'youtube' | 'instagram';
-};
-
-interface PublicPortfolioProps {
-  featuredVideos?: FeaturedVideo[];
-  userTheme?: UserTheme;
-  userProfile?: UserProfile;
-  projects?: Project[];
-  experiences?: Experience[];
-  articles?: ScientificArticle[];
-  cvs?: CV[];
-  onBackToDashboard?: () => void;
-  previewMode?: boolean;
-}
-
-const resolveMediaEmbed = (url?: string): MediaEmbed | null => {
-  if (!url) {
-    return null;
+const expandHex = (hex: string): string | null => {
+  const normalized = hex.replace('#', '');
+  if (normalized.length === 3) {
+    return normalized.split('').map((char) => `${char}${char}`).join('');
   }
-
-  const trimmed = url.trim();
-  if (!trimmed) {
-    return null;
+  if (normalized.length === 6) {
+    return normalized;
   }
-
-  const youtubeMatch = trimmed.match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/))([\w-]{11})/);
-  if (youtubeMatch?.[1]) {
-    return {
-      src: `https://www.youtube.com/embed/${youtubeMatch[1]}`,
-      platform: 'youtube',
-    };
-  }
-
   return null;
 };
 
-const formatEducationTimeline = (item?: EducationItem): string => {
-  if (!item) {
-    return '';
+const hexToRgb = (hex: string): { r: number; g: number; b: number } | null => {
+  const expanded = expandHex(hex);
+  if (!expanded) {
+    return null;
   }
-  const start = item.startYear?.trim() ?? '';
-  const end = item.endYear?.trim() ?? '';
-  if (start && end) {
-    return `${start} - ${end}`;
+  const r = Number.parseInt(expanded.slice(0, 2), 16);
+  const g = Number.parseInt(expanded.slice(2, 4), 16);
+  const b = Number.parseInt(expanded.slice(4, 6), 16);
+  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) {
+    return null;
   }
-  if (start) {
-    return start;
-  }
-  if (end) {
-    return end;
-  }
-  return item.period ?? '';
+  return { r, g, b };
 };
 
-const cvLabels: Record<CV['language'], {
-  title: string;
-  summary: string;
-  experience: string;
-  projects: string;
-  articles: string;
-  education: string;
-  skills: string;
-  contact: string;
-}> = {
+const withAlpha = (hex: string, alpha: number, fallback: string): string => {
+  const rgb = hexToRgb(hex);
+  if (!rgb) {
+    return fallback;
+  }
+  const clamped = Math.min(Math.max(alpha, 0), 1);
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${clamped})`;
+};
+
+const toHexComponent = (value: number): string => value.toString(16).padStart(2, '0');
+
+const darkenColor = (hex: string, amount: number, fallback: string): string => {
+  const rgb = hexToRgb(hex);
+  if (!rgb) {
+    return fallback;
+  }
+  const clamped = Math.min(Math.max(amount, 0), 1);
+  const r = Math.max(0, Math.round(rgb.r * (1 - clamped)));
+  const g = Math.max(0, Math.round(rgb.g * (1 - clamped)));
+  const b = Math.max(0, Math.round(rgb.b * (1 - clamped)));
+  return `#${toHexComponent(r)}${toHexComponent(g)}${toHexComponent(b)}`;
+};
+
+const lightenColor = (hex: string, amount: number, fallback: string): string => {
+  const rgb = hexToRgb(hex);
+  if (!rgb) {
+    return fallback;
+  }
+  const clamped = Math.min(Math.max(amount, 0), 1);
+  const r = Math.min(255, Math.round(rgb.r + (255 - rgb.r) * clamped));
+  const g = Math.min(255, Math.round(rgb.g + (255 - rgb.g) * clamped));
+  const b = Math.min(255, Math.round(rgb.b + (255 - rgb.b) * clamped));
+  return `#${toHexComponent(r)}${toHexComponent(g)}${toHexComponent(b)}`;
+};
+
+const chooseTextColor = (hex: string, lightFallback: string, darkFallback: string): string => {
+  const rgb = hexToRgb(hex);
+  if (!rgb) {
+    return lightFallback;
+  }
+  const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+  return luminance > 0.6 ? lightFallback : darkFallback;
+};
+
+const CV_LABELS: Record<CV['language'], CvLabelRecord> = {
   pt: {
     title: 'Currículo',
     summary: 'Resumo Profissional',
-    experience: 'Experiência',
+    experience: 'Experiências',
     projects: 'Projetos',
-    articles: 'Artigos Cientificos',
-    education: 'Formação',
+    articles: 'Artigos',
+    education: 'Educação',
     skills: 'Habilidades',
     contact: 'Contato',
   },
   en: {
-    title: 'Resume',
+    title: 'Curriculum Vitae',
     summary: 'Professional Summary',
     experience: 'Experience',
     projects: 'Projects',
-    articles: 'Scientific Articles',
+    articles: 'Articles',
     education: 'Education',
     skills: 'Skills',
     contact: 'Contact',
@@ -133,163 +169,442 @@ const cvLabels: Record<CV['language'], {
   es: {
     title: 'Currículum',
     summary: 'Resumen Profesional',
-    experience: 'Experiencia',
+    experience: 'Experiencias',
     projects: 'Proyectos',
-    articles: 'Articulos Cientificos',
-    education: 'Formación',
+    articles: 'Artículos',
+    education: 'Educación',
     skills: 'Habilidades',
     contact: 'Contacto',
   },
 };
 
+interface PublicPortfolioProps {
+  userTheme?: UserTheme | null;
+  userProfile?: UserProfile | null;
+  featuredVideos?: FeaturedVideo[];
+  projects?: Project[];
+  experiences?: Experience[];
+  articles?: ScientificArticle[];
+  cvs?: CV[];
+  loading?: boolean;
+  error?: string | null;
+  previewMode?: boolean;
+  translateEnabled?: boolean;
+  translateEndpoint?: string;
+  publicPortfolioId?: string | null;
+  onRetry?: () => void;
+  onBackToDashboard?: () => void;
+  onSlugChange?: (slug: string) => void;
+}
+
 export function PublicPortfolio({
-  featuredVideos = [],
-  userTheme,
-  userProfile,
-  projects = [],
-  experiences = [],
-  articles = [],
-  cvs = [],
-  onBackToDashboard,
+  userTheme: userThemeProp,
+  userProfile: userProfileProp,
+  featuredVideos: featuredVideosProp = [],
+  projects: projectsProp = [],
+  experiences: experiencesProp = [],
+  articles: articlesProp = [],
+  cvs: cvsProp = [],
+  loading = false,
+  error = null,
   previewMode = false,
+  translateEnabled: translateEnabledProp,
+  translateEndpoint: translateEndpointProp,
+  publicPortfolioId,
+  onRetry,
+  onBackToDashboard,
+  onSlugChange,
 }: PublicPortfolioProps) {
   const { locale, setLocale, t } = useLocale();
-  const [cvLanguage, setCvLanguage] = useState<CV['language']>(locale as CV['language']);
-  const cvRef = useRef<HTMLDivElement | null>(null);
-  const [portfolioTranslations, setPortfolioTranslations] = useState<Record<string, string>>({});
-  const [cvTranslations, setCvTranslations] = useState<Record<string, string>>({});
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  const [fetchNonce, setFetchNonce] = useState(0);
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteData, setRemoteData] = useState<{
+    profile: UserProfile | null;
+    theme: UserTheme | null;
+    featuredVideos: FeaturedVideo[];
+    projects: Project[];
+    experiences: Experience[];
+    articles: ScientificArticle[];
+    cvs: CV[];
+  } | null>(null);
+
+  const shouldSelfFetch = !previewMode && Boolean(publicPortfolioId?.trim());
+
   useEffect(() => {
-    if (previewMode) {
-      setMobileNavOpen(false);
+    if (!shouldSelfFetch) {
+      setRemoteLoading(false);
+      setRemoteError(null);
+      setRemoteData(null);
+      return;
     }
-  }, [previewMode]);
-  const configuredTranslateEndpoint = (import.meta.env.VITE_TRANSLATE_ENDPOINT ?? '').trim();
-  const translateEndpoint = configuredTranslateEndpoint || '/api/translate';
-  const rawTranslateFlag = import.meta.env.VITE_ENABLE_TRANSLATIONS ?? '';
-  const translateEnabled = import.meta.env.PROD || rawTranslateFlag.toLowerCase() === 'true';
 
-  const primaryColor = userTheme?.primaryColor ?? '#c92563';
-  const secondaryColor = userTheme?.secondaryColor ?? '#6b5d7a';
-  const accentColor = userTheme?.accentColor ?? '#c92563';
-  const backgroundColor = userTheme?.backgroundColor ?? '#ffffff';
-  const fontFamily = userTheme?.fontFamily ?? 'Inter, system-ui, sans-serif';
-  const themeMode = userTheme?.themeMode ?? 'light';
-  const layout = userTheme?.layout ?? 'modern';
-  const heroParticleLayouts = useMemo(() => new Set<UserTheme['layout']>(['modern', 'masonry', 'spotlight']), []);
-  const heroSummaryLayouts = useMemo(
-    () => new Set<UserTheme['layout']>(['minimal', 'list', 'masonry', 'spotlight', 'editorial']),
-    [],
-  );
+    let isActive = true;
+    const portfolioId = publicPortfolioId?.trim();
+    if (!portfolioId) {
+      setRemoteError('Portfólio não encontrado.');
+      return;
+    }
 
-  const preventPreviewClick = previewMode
-    ? (event: MouseEvent<HTMLElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
+    const load = async () => {
+      setRemoteLoading(true);
+      setRemoteError(null);
+      setRemoteData(null);
+
+      try {
+        let profile = await fetchUserProfile(portfolioId);
+        if (!profile) {
+          profile = await fetchUserProfileBySlug(portfolioId);
+        }
+
+        if (!profile) {
+          if (!isActive) {
+            return;
+          }
+          setRemoteError('Portfólio não encontrado.');
+          setRemoteData(null);
+          return;
+        }
+
+        const userId = profile.id;
+
+        const [theme, videos, projectsList, experiencesList, articlesList, cvsList] = await Promise.all([
+          fetchUserTheme(userId),
+          fetchFeaturedVideos(userId),
+          fetchProjects(userId),
+          fetchExperiences(userId),
+          fetchScientificArticles(userId),
+          fetchCvs(userId),
+        ]);
+
+        if (!isActive) {
+          return;
+        }
+
+        setRemoteData({
+          profile,
+          theme,
+          featuredVideos: videos,
+          projects: projectsList,
+          experiences: experiencesList,
+          articles: articlesList,
+          cvs: cvsList,
+        });
+
+        if (typeof window !== 'undefined' && profile.slug && profile.slug.trim().length > 0) {
+          const slug = profile.slug.trim();
+          const currentUrl = new URL(window.location.href);
+          if (currentUrl.pathname !== `/p/${slug}`) {
+            currentUrl.pathname = `/p/${slug}`;
+            window.history.replaceState({}, '', currentUrl.toString());
+            if (onSlugChange) {
+              onSlugChange(slug);
+            }
+          }
+        }
+      } catch (err) {
+        if (!isActive) {
+          return;
+        }
+        const message = err instanceof Error ? err.message : 'Erro ao carregar portfólio público.';
+        setRemoteError(message);
+        console.error('Falha ao carregar portfólio público:', err);
+      } finally {
+        if (isActive) {
+          setRemoteLoading(false);
+        }
       }
-    : undefined;
+    };
 
-  const handleNavLinkClick = (event: MouseEvent<HTMLElement>) => {
-    if (preventPreviewClick) {
-      preventPreviewClick(event);
+    load();
+
+    return () => {
+      isActive = false;
+    };
+  }, [shouldSelfFetch, publicPortfolioId, fetchNonce, onSlugChange]);
+
+  const cvRef = useRef<HTMLDivElement>(null);
+  const pendingCvDownloadLanguage = useRef<CV['language'] | null>(null);
+  const performCvDownloadRef = useRef<() => void>(() => {});
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [cvTranslations, setCvTranslations] = useState<Record<string, string>>({});
+  const [portfolioTranslations, setPortfolioTranslations] = useState<Record<string, string>>({});
+  const [cvLanguage, setCvLanguage] = useState<CV['language']>(() => (locale === 'en' || locale === 'es' ? locale : 'pt'));
+  const [cvIdParam, setCvIdParam] = useState<string | null>(() => {
+    if (typeof window === 'undefined') {
+      return null;
     }
+    const params = new URLSearchParams(window.location.search);
+    const initial = params.get('cvId');
+    return initial && initial.trim().length > 0 ? initial : null;
+  });
+
+  const userTheme = useMemo(() => {
+    if (remoteData) {
+      return remoteData.theme;
+    }
+    return userThemeProp ?? null;
+  }, [remoteData, userThemeProp]);
+
+  const userProfile = useMemo(() => {
+    if (remoteData) {
+      return remoteData.profile;
+    }
+    return userProfileProp ?? null;
+  }, [remoteData, userProfileProp]);
+
+  const featuredVideos = useMemo(() => {
+    if (remoteData) {
+      return remoteData.featuredVideos;
+    }
+    return featuredVideosProp;
+  }, [remoteData, featuredVideosProp]);
+
+  const projects = useMemo(() => {
+    if (remoteData) {
+      return remoteData.projects;
+    }
+    return projectsProp;
+  }, [remoteData, projectsProp]);
+
+  const experiences = useMemo(() => {
+    if (remoteData) {
+      return remoteData.experiences;
+    }
+    return experiencesProp;
+  }, [remoteData, experiencesProp]);
+
+  const articles = useMemo(() => {
+    if (remoteData) {
+      return remoteData.articles;
+    }
+    return articlesProp;
+  }, [remoteData, articlesProp]);
+
+  const cvs = useMemo(() => {
+    if (remoteData) {
+      return remoteData.cvs;
+    }
+    return cvsProp;
+  }, [remoteData, cvsProp]);
+
+  const theme: ThemeSnapshot = {
+    primaryColor: userTheme?.primaryColor?.trim() || DEFAULT_THEME.primaryColor,
+    secondaryColor: userTheme?.secondaryColor?.trim() || DEFAULT_THEME.secondaryColor,
+    accentColor: userTheme?.accentColor?.trim() || DEFAULT_THEME.accentColor,
+    backgroundColor: userTheme?.backgroundColor?.trim() || DEFAULT_THEME.backgroundColor,
+    fontFamily: userTheme?.fontFamily?.trim() || DEFAULT_THEME.fontFamily,
+    themeMode: userTheme?.themeMode === 'dark' ? 'dark' : DEFAULT_THEME.themeMode,
+    layout: (userTheme?.layout ?? DEFAULT_THEME.layout) as LayoutVariant,
+  };
+
+  const layout = theme.layout;
+  const themeMode = theme.themeMode;
+  const rawPrimaryColor = theme.primaryColor;
+  const rawSecondaryColor = theme.secondaryColor;
+  const rawAccentColor = theme.accentColor;
+  const rawBackgroundColor = theme.backgroundColor;
+  const fontFamily = theme.fontFamily;
+  const normalizedPrimaryColor = normalizeHexColor(rawPrimaryColor, DEFAULT_THEME.primaryColor);
+  const normalizedSecondaryColor = normalizeHexColor(rawSecondaryColor, DEFAULT_THEME.secondaryColor);
+  const normalizedAccentColor = normalizeHexColor(rawAccentColor, DEFAULT_THEME.accentColor);
+  const normalizedBackgroundColor = normalizeHexColor(rawBackgroundColor, DEFAULT_THEME.backgroundColor);
+  const primaryColor = normalizedPrimaryColor;
+  const secondaryColor = normalizedSecondaryColor;
+  const accentColor = normalizedAccentColor;
+  const backgroundColor = normalizedBackgroundColor;
+  const heroPhotoPrimaryTone = darkenColor(primaryColor, themeMode === 'dark' ? 0.08 : 0.3, themeMode === 'dark' ? '#040111' : '#1a1534');
+  const heroPhotoAccentTone = lightenColor(heroPhotoPrimaryTone, themeMode === 'dark' ? 0.1 : 0.18, heroPhotoPrimaryTone);
+  const heroPhotoBackground = `linear-gradient(145deg, ${heroPhotoPrimaryTone}, ${heroPhotoAccentTone})`;
+  const heroPhotoShadowSoft = `0 36px 90px -48px ${withAlpha(heroPhotoPrimaryTone, themeMode === 'dark' ? 0.7 : 0.55, 'rgba(0,0,0,0.38)')}`;
+  const heroPhotoShadowStrong = `0 55px 120px -52px ${withAlpha(heroPhotoPrimaryTone, themeMode === 'dark' ? 0.78 : 0.62, 'rgba(0,0,0,0.45)')}`;
+  const heroCardSurfaceStart = heroPhotoPrimaryTone;
+  const heroCardSurfaceEnd = darkenColor(heroPhotoPrimaryTone, themeMode === 'dark' ? 0.14 : 0.28, heroPhotoPrimaryTone);
+  const heroCardBackgroundGradient = `linear-gradient(140deg, ${heroCardSurfaceStart}, ${heroCardSurfaceEnd})`;
+
+  const resolvedTranslateEndpoint = (translateEndpointProp ?? '/api/translate').trim();
+  const translateEnabled = Boolean(translateEnabledProp ?? (resolvedTranslateEndpoint.length > 0));
+  const translateEndpoint = resolvedTranslateEndpoint;
+
+  const handleInternalRetry = () => {
+    if (shouldSelfFetch) {
+      setFetchNonce((value) => value + 1);
+    }
+    if (onRetry) {
+      onRetry();
+    }
+  };
+
+  const externalErrorMessage = typeof error === 'string' ? error.trim() : '';
+  const errorMessage = remoteError ?? externalErrorMessage;
+  const showLoadingState = remoteLoading || Boolean(loading);
+  const showErrorState = !showLoadingState && errorMessage.length > 0;
+
+  const preventPreviewClick = (event: MouseEvent<HTMLAnchorElement | HTMLButtonElement>) => {
+    if (!previewMode) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const handleNavLinkClick = (event: MouseEvent<HTMLAnchorElement>) => {
+    const href = event.currentTarget.getAttribute('href') ?? '';
+
+    if (previewMode) {
+      event.preventDefault();
+      return;
+    }
+
+    if (href.startsWith('#') && typeof window !== 'undefined') {
+      event.preventDefault();
+      const target = document.querySelector(href);
+      if (target instanceof HTMLElement) {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
     setMobileNavOpen(false);
   };
 
-  let pageBackground = themeMode === 'dark' ? '#0f0b1f' : backgroundColor || '#ffffff';
+  const cvLabels = CV_LABELS;
+
+  console.log('PUBLIC PORTFOLIO RENDER START', {
+    previewMode,
+    layout,
+    locale,
+    loading: showLoadingState,
+    hasError: showErrorState,
+  });
+
+  let pageBackground = themeMode === 'dark' ? '#05020c' : normalizedBackgroundColor;
   let pageTextColor = themeMode === 'dark' ? '#f7f3ff' : '#1a1534';
-  let navBackground = themeMode === 'dark' ? 'rgba(12, 9, 24, 0.9)' : '#ffffffee';
-  let navBorderColor = themeMode === 'dark' ? 'rgba(232,227,240,0.12)' : `${secondaryColor}20`;
-  let navTextColor = themeMode === 'dark' ? '#f7f3ff' : '#1a1534';
-  let navLanguageActiveStyle: LanguageStyle = {
-    backgroundColor: themeMode === 'dark' ? 'rgba(255,255,255,0.18)' : `${primaryColor}20`,
-    color: themeMode === 'dark' ? '#ffffff' : primaryColor,
-    borderColor: 'transparent',
-    opacity: 1,
-  };
-  let navLanguageInactiveStyle: LanguageStyle = {
-    backgroundColor: 'transparent',
-    color: themeMode === 'dark' ? 'rgba(255,255,255,0.7)' : `${primaryColor}90`,
-    borderColor: 'transparent',
-    opacity: 0.75,
-  };
-  let navBackButtonStyle: LanguageStyle = {
-    backgroundColor: themeMode === 'dark' ? 'rgba(255,255,255,0.1)' : `${primaryColor}15`,
+  let navBackground = themeMode === 'dark' ? 'rgba(13,10,27,0.92)' : '#ffffff';
+  let navBorderColor = themeMode === 'dark' ? 'rgba(255,255,255,0.08)' : 'rgba(26,21,52,0.08)';
+  let navTextColor = themeMode === 'dark' ? '#ffffff' : '#1a1534';
+  let navWrapperClass = 'max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4';
+  let navLinksClass = 'hidden md:flex items-center gap-6 text-sm font-semibold uppercase tracking-[0.2em]';
+  let navLanguageGroupClass = 'hidden md:flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.35em]';
+  let navNameClass = 'font-semibold uppercase tracking-[0.35em] text-sm';
+  let navNameContainerClass = 'flex flex-col sm:flex-row sm:items-center gap-3 uppercase tracking-[0.25em]';
+  let navLanguageActiveStyle: CSSProperties = {
+    backgroundColor: themeMode === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(26,21,52,0.08)',
     color: navTextColor,
     borderColor: 'transparent',
     opacity: 1,
   };
-  let navWrapperClass = 'max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between';
-  let navLinksClass = 'hidden md:flex items-center gap-6 text-sm';
-  let navLanguageGroupClass = 'hidden md:flex items-center gap-2 text-xs';
-  let navNameClass = 'font-semibold tracking-wide';
-  let navNameContainerClass = 'flex flex-col sm:flex-row sm:items-center gap-3';
-
+  let navLanguageInactiveStyle: CSSProperties = {
+    backgroundColor: 'transparent',
+    color: themeMode === 'dark' ? 'rgba(255,255,255,0.65)' : 'rgba(26,21,52,0.65)',
+    borderColor: 'transparent',
+    opacity: 0.6,
+  };
+  let navBackButtonStyle: CSSProperties = {
+    backgroundColor: themeMode === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(26,21,52,0.05)',
+    color: navTextColor,
+    borderColor: themeMode === 'dark' ? 'rgba(255,255,255,0.15)' : 'rgba(26,21,52,0.12)',
+    opacity: 1,
+  };
+  const heroLightBackgroundStart = withAlpha(primaryColor, 0.16, '#ffffff');
+  const heroLightBackgroundEnd = withAlpha(accentColor, 0.14, '#ffffff');
+  const heroDarkBackgroundStart = withAlpha(primaryColor, 0.62, 'rgba(24,18,44,0.95)');
+  const heroDarkBackgroundEnd = withAlpha(accentColor, 0.5, 'rgba(10,6,22,0.94)');
   let heroSectionBackground = themeMode === 'dark'
-    ? `linear-gradient(135deg, ${primaryColor}, #120d26)`
-    : `linear-gradient(135deg, ${primaryColor}, ${accentColor})`;
-  let heroContainerClass = 'max-w-6xl mx-auto relative z-10 grid md:grid-cols-[1.15fr_0.85fr] gap-12 items-center';
-  let heroTextAlignmentClass = 'text-white';
-  let heroButtonGroupClass = 'flex flex-wrap gap-4 mb-10 justify-center md:justify-start';
-  let heroMetaAlignmentClass = 'flex flex-wrap items-center justify-center gap-3 text-sm md:justify-start';
-  let heroHeadingColor = '#ffffff';
-  let heroParagraphColor = 'rgba(255, 255, 255, 0.82)';
-  let heroKickerColor = 'rgba(255, 255, 255, 0.7)';
-  let heroMetaTextColor = 'rgba(255, 255, 255, 0.8)';
-  let heroMetaLabelColor = 'rgba(255, 255, 255, 0.7)';
-  let heroLanguageActiveStyle: LanguageStyle = {
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    color: '#ffffff',
+    ? `linear-gradient(135deg, ${heroDarkBackgroundStart}, ${heroDarkBackgroundEnd})`
+    : `linear-gradient(135deg, ${heroLightBackgroundStart}, ${heroLightBackgroundEnd})`;
+  let heroTextAlignmentClass = themeMode === 'dark' ? 'text-white' : 'text-[#1a1534]';
+  let heroHeadingColor = themeMode === 'dark' ? '#f7f3ff' : '#1a1534';
+  let heroParagraphColor = themeMode === 'dark' ? 'rgba(247,243,255,0.78)' : '#4d415a';
+  let heroKickerColor = themeMode === 'dark' ? '#bfb2e8' : '#8a7ca0';
+  let heroMetaTextColor = themeMode === 'dark' ? 'rgba(247,243,255,0.75)' : '#4d3e63';
+  let heroLanguageActiveStyle: CSSProperties = {
+    backgroundColor: themeMode === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(26,21,52,0.08)',
+    color: heroHeadingColor,
     borderColor: 'transparent',
     opacity: 1,
   };
-  let heroLanguageInactiveStyle: LanguageStyle = {
+  let heroLanguageInactiveStyle: CSSProperties = {
     backgroundColor: 'transparent',
-    color: 'rgba(255,255,255,0.7)',
+    color: themeMode === 'dark' ? 'rgba(247,243,255,0.6)' : '#7a6a9a',
     borderColor: 'transparent',
-    opacity: 0.75,
+    opacity: 0.7,
   };
-  let heroSecondaryButtonStyle: ButtonStyle = {
-    border: `2px solid ${accentColor}40`,
+  let heroContainerClass = 'max-w-6xl mx-auto relative z-10 flex flex-col md:flex-row items-center md:items-start gap-12';
+  let heroTextContainerClass = `${heroTextAlignmentClass} flex flex-col items-start gap-6 order-1 w-full md:max-w-2xl`;
+  let heroCardColumnClass = 'order-2 w-full md:w-auto flex justify-center md:justify-end';
+  let heroButtonGroupClass = 'flex flex-wrap items-center gap-3 md:gap-4 mb-6';
+  let heroHighlightChipWrapperClass = 'flex flex-wrap items-center gap-3 mb-8';
+  let heroHighlightChipClass = 'inline-flex items-center rounded-full px-4 py-2 text-sm font-semibold tracking-tight shadow-lg transition-transform hover:-translate-y-0.5';
+  let heroHighlightChipStyle: CSSProperties = {
+    background: heroPhotoBackground,
     color: '#ffffff',
-    backgroundColor: 'transparent',
+    border: themeMode === 'dark' ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(26,21,52,0.12)',
+    boxShadow: themeMode === 'dark'
+      ? `0 26px 64px -32px ${withAlpha(accentColor, 0.82, 'rgba(8,5,18,0.85)')}`
+      : `0 26px 64px -32px ${withAlpha(accentColor, 0.6, 'rgba(26,21,52,0.3)')}`,
   };
-  let heroCardVisible = true;
-  let heroCardContainerClass = 'border rounded-3xl p-8 backdrop-blur-md shadow-2xl';
-  let heroCardBackground = 'rgba(255,255,255,0.1)';
-  let heroCardBorderColor = 'rgba(255,255,255,0.2)';
-  let heroCardTextColor = 'rgba(255,255,255,0.85)';
-  let heroCardHeadingColor = '#ffffff';
-  let heroCardWrapperClass = 'flex flex-col items-center gap-6 text-center';
-  let heroCardContentClass = 'flex flex-col items-center gap-5 w-full';
-  let heroCardContactWrapperClass = 'space-y-4 text-sm w-full';
-  let heroCardContactItemClass = 'flex items-center gap-2 justify-center';
-  let heroCardSocialWrapperClass = 'flex flex-wrap justify-center gap-4 mt-6';
-  let heroCardSocialButtonClass = 'w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-110';
-  let heroCardSocialButtonStyle: CSSProperties = { backgroundColor: 'rgba(255,255,255,0.08)' };
-  let heroCardPhotoWrapperClass = 'w-40 h-40 rounded-full p-1.5 shadow-2xl';
+  let heroStackListClass = 'flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold tracking-wide mt-6';
+  let heroStackListStyle: CSSProperties = { color: heroMetaTextColor };
+  let heroCvLanguageButtonClass = 'inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2';
+  let heroCvLanguageButtonActiveStyle: CSSProperties = {
+    backgroundColor: withAlpha(primaryColor, themeMode === 'dark' ? 0.32 : 0.14, themeMode === 'dark' ? 'rgba(255,255,255,0.12)' : 'rgba(26,21,52,0.08)'),
+    color: heroHeadingColor,
+    border: `1px solid ${withAlpha(primaryColor, themeMode === 'dark' ? 0.48 : 0.22, 'rgba(26,21,52,0.15)')}`,
+    boxShadow: themeMode === 'dark'
+      ? `0 18px 48px -26px ${withAlpha(accentColor, 0.7, 'rgba(8,5,18,0.85)')}`
+      : `0 18px 48px -26px ${withAlpha(accentColor, 0.5, 'rgba(26,21,52,0.25)')}`,
+  };
+  let heroCvLanguageButtonInactiveStyle: CSSProperties = {
+    backgroundColor: themeMode === 'dark' ? 'rgba(247,243,255,0.08)' : 'rgba(26,21,52,0.05)',
+    color: heroMetaTextColor,
+    border: `1px solid ${withAlpha(primaryColor, themeMode === 'dark' ? 0.18 : 0.1, 'rgba(26,21,52,0.12)')}`,
+    boxShadow: 'none',
+    opacity: themeMode === 'dark' ? 0.85 : 1,
+  };
+  let heroCardBackground = heroCardBackgroundGradient;
+  let heroCardBorderColor = themeMode === 'dark'
+    ? withAlpha('#ffffff', 0.22, 'rgba(247,243,255,0.18)')
+    : withAlpha(primaryColor, 0.24, 'rgba(26,21,52,0.18)');
+  let heroCardTextColor = themeMode === 'dark' ? 'rgba(247,243,255,0.9)' : 'rgba(255,255,255,0.92)';
+  let heroCardHeadingColor = themeMode === 'dark' ? '#ffffff' : '#ffffff';
+  let heroCardContainerClass = 'w-full max-w-md md:max-w-lg rounded-[36px] border px-8 py-10 shadow-[0_45px_95px_-52px_rgba(15,11,35,0.6)] backdrop-blur-xl';
+  let heroCardWrapperClass = 'flex flex-col items-center gap-8 text-center';
+  let heroCardContentClass = 'flex flex-col items-center gap-5 w-full text-center';
+  let heroCardContactWrapperClass = 'space-y-3 text-sm w-full text-center';
+  let heroCardContactItemClass = 'flex items-center gap-3 justify-center text-base font-medium';
+  let heroCardSocialWrapperClass = 'flex flex-wrap gap-3 mt-5 justify-center';
+  let heroCardSocialButtonClass = 'inline-flex items-center justify-center rounded-full px-3 py-2 text-xs font-semibold border transition-all hover:-translate-y-0.5 text-white';
+  let heroCardSocialButtonStyle: CSSProperties = {
+    backgroundColor: withAlpha('#ffffff', 0.12, 'rgba(255,255,255,0.12)'),
+    color: '#ffffff',
+    borderColor: withAlpha('#ffffff', 0.24, 'rgba(255,255,255,0.24)'),
+    boxShadow: `0 18px 38px -26px ${withAlpha('#000000', 0.55, 'rgba(0,0,0,0.42)')}`,
+  };
+  let heroCardPhotoWrapperClass = 'relative w-[11.5rem] h-[12.5rem] md:w-[13rem] md:h-[13.5rem] rounded-[32px] flex items-center justify-center overflow-hidden shadow-[0_40px_100px_-55px_rgba(14,10,32,0.55)]';
   let heroCardPhotoWrapperStyle: CSSProperties = {
-    background: `linear-gradient(135deg, ${primaryColor}, ${accentColor})`,
-    boxShadow: `0 25px 50px -12px ${accentColor}50`,
+    background: heroPhotoBackground,
+    boxShadow: heroPhotoShadowStrong,
+    padding: themeMode === 'dark' ? '0.4rem' : '0.55rem',
+    border: withAlpha('#ffffff', themeMode === 'dark' ? 0.28 : 0.2, 'rgba(255,255,255,0.18)'),
   };
-  let heroCardPhotoClass = 'w-full h-full rounded-full object-cover';
-  let heroCardSummaryClass = 'text-sm leading-relaxed text-center opacity-90';
+  let heroCardPhotoClass = 'w-full h-full object-cover rounded-[24px]';
+  let heroCardSummaryClass = 'text-sm leading-relaxed text-center';
   let heroCardIconColor = '#ffffff';
-
   let sectionTitleColor = themeMode === 'dark' ? '#f7f3ff' : '#1a1534';
-  let sectionBodyColor = themeMode === 'dark' ? '#dcd5f1' : secondaryColor;
-  let surfaceBackground = themeMode === 'dark' ? 'rgba(22, 16, 40, 0.85)' : '#ffffff';
-  let surfaceBorderColor = themeMode === 'dark' ? 'rgba(232,227,240,0.12)' : `${secondaryColor}18`;
-  let softSurfaceBackground = themeMode === 'dark' ? 'rgba(232, 227, 240, 0.08)' : '#f5f3f7';
-  let chipTextColor = themeMode === 'dark' ? '#f7f3ff' : secondaryColor;
-  let chipBorderColor = themeMode === 'dark' ? 'rgba(232,227,240,0.2)' : `${secondaryColor}25`;
+  let sectionBodyColor = themeMode === 'dark' ? '#dcd5f1' : '#4d415a';
+  let surfaceBackground = themeMode === 'dark' ? 'rgba(24,18,44,0.8)' : '#ffffff';
+  let surfaceBorderColor = themeMode === 'dark' ? 'rgba(247,243,255,0.08)' : 'rgba(26,21,52,0.1)';
+  let softSurfaceBackground = themeMode === 'dark' ? 'rgba(247,243,255,0.06)' : '#f5f3f7';
+  let chipTextColor = themeMode === 'dark' ? '#f7f3ff' : normalizedAccentColor;
+  let chipBorderColor = themeMode === 'dark' ? 'rgba(247,243,255,0.12)' : `${normalizedAccentColor}24`;
   let timelineBackground = themeMode === 'dark'
-    ? 'linear-gradient(180deg, rgba(12,9,24,0.9) 0%, rgba(20,15,38,0.94) 100%)'
-    : '#f8f7fa';
-  let timelineLineColor = themeMode === 'dark' ? 'rgba(232,227,240,0.18)' : `${secondaryColor}25`;
-  let aboutSectionBackground = themeMode === 'dark' ? 'rgba(15,11,31,0.88)' : '#ffffff';
-  let contactSectionBackground = `linear-gradient(135deg, ${primaryColor}, ${backgroundColor || '#1a1534'})`;
+    ? 'linear-gradient(180deg, rgba(14,10,32,0.95) 0%, rgba(9,6,20,0.95) 100%)'
+    : 'linear-gradient(180deg, rgba(248,247,250,1) 0%, rgba(255,255,255,1) 100%)';
+  let timelineLineColor = themeMode === 'dark' ? 'rgba(247,243,255,0.12)' : 'rgba(26,21,52,0.12)';
+  let aboutSectionBackground = themeMode === 'dark' ? 'rgba(10,6,22,0.95)' : '#ffffff';
+  let contactSectionBackground = `linear-gradient(135deg, ${normalizedPrimaryColor}, ${normalizedAccentColor})`;
 
   switch (layout) {
     case 'minimal': {
@@ -304,28 +619,27 @@ export function PublicPortfolio({
       navNameClass = 'font-semibold tracking-[0.45em] uppercase text-xs';
       navNameContainerClass = 'flex flex-col sm:flex-row sm:items-center gap-3 uppercase tracking-[0.2em]';
       navLanguageActiveStyle = {
-        backgroundColor: themeMode === 'dark' ? 'rgba(247,243,255,0.15)' : `${primaryColor}12`,
+        backgroundColor: themeMode === 'dark' ? 'rgba(247,243,255,0.15)' : `${normalizedPrimaryColor}12`,
         color: navTextColor,
         borderColor: 'transparent',
         opacity: 1,
       };
       navLanguageInactiveStyle = {
         backgroundColor: 'transparent',
-        color: themeMode === 'dark' ? 'rgba(255,255,255,0.65)' : `${primaryColor}70`,
+        color: themeMode === 'dark' ? 'rgba(255,255,255,0.65)' : `${normalizedPrimaryColor}70`,
         borderColor: 'transparent',
         opacity: 0.7,
       };
       heroSectionBackground = themeMode === 'dark'
-        ? `radial-gradient(circle at top, rgba(45,37,80,0.25), rgba(10,7,22,0.95))`
-        : '#ffffff';
+        ? `radial-gradient(circle at top, ${withAlpha(primaryColor, 0.4, 'rgba(45,37,80,0.25)')}, ${withAlpha(accentColor, 0.55, 'rgba(10,7,22,0.95)')})`
+        : `linear-gradient(135deg, ${withAlpha(primaryColor, 0.18, '#ffffff')}, ${withAlpha(accentColor, 0.16, '#ffffff')})`;
       heroTextAlignmentClass = themeMode === 'dark' ? 'text-white' : 'text-[#1a1534]';
       heroHeadingColor = themeMode === 'dark' ? '#f7f3ff' : '#1a1534';
       heroParagraphColor = themeMode === 'dark' ? '#d9d0f1' : '#4d415a';
       heroKickerColor = themeMode === 'dark' ? '#bfb4e5' : '#8a7ca0';
       heroMetaTextColor = themeMode === 'dark' ? 'rgba(247,243,255,0.8)' : '#4d415a';
-      heroMetaLabelColor = themeMode === 'dark' ? 'rgba(247,243,255,0.65)' : '#6b5d7a';
       heroLanguageActiveStyle = {
-        backgroundColor: themeMode === 'dark' ? 'rgba(247,243,255,0.15)' : `${primaryColor}12`,
+        backgroundColor: themeMode === 'dark' ? 'rgba(247,243,255,0.15)' : `${normalizedPrimaryColor}12`,
         color: heroHeadingColor,
         borderColor: 'transparent',
         opacity: 1,
@@ -336,42 +650,48 @@ export function PublicPortfolio({
         borderColor: 'transparent',
         opacity: 0.7,
       };
-      heroSecondaryButtonStyle = {
-        border: `1px solid ${themeMode === 'dark' ? 'rgba(247,243,255,0.18)' : `${secondaryColor}30`}`,
-        color: heroHeadingColor,
-        backgroundColor: 'transparent',
-      };
-      heroCardBackground = themeMode === 'dark' ? 'rgba(18,14,32,0.85)' : '#ffffff';
-      heroCardBorderColor = themeMode === 'dark' ? 'rgba(247,243,255,0.08)' : `${secondaryColor}20`;
-      heroCardTextColor = themeMode === 'dark' ? 'rgba(247,243,255,0.8)' : '#4d415a';
-      heroCardContainerClass = 'rounded-[32px] border p-8 shadow-xl';
-      heroCardWrapperClass = 'flex flex-col md:flex-row items-center md:items-start gap-8 text-left w-full';
-      heroCardContentClass = 'flex flex-col items-start gap-5 w-full';
-      heroCardContactWrapperClass = 'space-y-3 text-sm w-full';
-      heroCardContactItemClass = 'flex items-center gap-3 justify-start';
-      heroCardSocialWrapperClass = 'flex flex-wrap gap-3 mt-4';
-      heroCardSocialButtonClass = 'inline-flex items-center justify-center rounded-full px-3 py-2 text-xs font-semibold border transition-all hover:-translate-y-0.5';
+      heroContainerClass = 'max-w-5xl mx-auto relative z-10 flex flex-col md:flex-row items-center md:items-start gap-10';
+      heroTextContainerClass = `${heroTextAlignmentClass} flex flex-col items-start gap-6 order-1 w-full`;
+      heroCardColumnClass = 'order-2 w-full md:w-auto flex justify-center md:justify-end';
+      heroButtonGroupClass = 'flex flex-wrap items-center gap-3 md:gap-4 mb-6';
+      heroHighlightChipWrapperClass = 'flex flex-wrap items-center gap-3 mb-7';
+      heroStackListClass = 'flex flex-wrap gap-x-5 gap-y-3 text-sm font-semibold tracking-wide mt-6';
+      heroStackListStyle = { color: heroMetaTextColor };
+      heroCardBackground = heroCardBackgroundGradient;
+      heroCardBorderColor = themeMode === 'dark'
+        ? withAlpha('#ffffff', 0.24, 'rgba(247,243,255,0.2)')
+        : withAlpha(primaryColor, 0.28, `${normalizedSecondaryColor}22`);
+      heroCardTextColor = themeMode === 'dark' ? 'rgba(247,243,255,0.92)' : 'rgba(255,255,255,0.94)';
+      heroCardContainerClass = 'max-w-xl w-full rounded-[40px] border px-9 py-10 shadow-[0_45px_100px_-48px_rgba(18,14,40,0.58)] backdrop-blur-xl';
+      heroCardWrapperClass = 'flex flex-col items-center gap-8 text-center w-full';
+      heroCardContentClass = 'flex flex-col items-center gap-5 w-full text-center';
+      heroCardContactWrapperClass = 'space-y-3 text-sm w-full text-center';
+      heroCardContactItemClass = 'flex items-center gap-3 justify-center text-base font-medium';
+      heroCardSocialWrapperClass = 'flex flex-wrap gap-3 mt-5 justify-center';
+      heroCardSocialButtonClass = 'inline-flex items-center justify-center rounded-full px-3 py-2 text-xs font-semibold border transition-all hover:-translate-y-0.5 text-white';
       heroCardSocialButtonStyle = {
-        backgroundColor: softSurfaceBackground,
-        color: chipTextColor,
-        borderColor: chipBorderColor,
+        backgroundColor: withAlpha('#ffffff', 0.14, 'rgba(255,255,255,0.14)'),
+        color: '#ffffff',
+        borderColor: withAlpha('#ffffff', 0.26, 'rgba(255,255,255,0.26)'),
+        boxShadow: `0 18px 40px -28px ${withAlpha('#000000', 0.5, 'rgba(0,0,0,0.4)')}`,
       };
-      heroCardPhotoWrapperClass = 'relative w-32 h-32 md:w-36 md:h-36 rounded-2xl overflow-hidden shadow-xl';
+      heroCardPhotoWrapperClass = 'relative w-44 h-56 md:w-56 md:h-64 rounded-[36px] flex items-center justify-center overflow-hidden shadow-[0_45px_110px_-52px_rgba(26,21,52,0.5)]';
       heroCardPhotoWrapperStyle = {
-        background: themeMode === 'dark' ? 'rgba(247,243,255,0.08)' : '#ffffff',
-        boxShadow: `0 24px 50px -20px ${accentColor}45`,
-        padding: 0,
+        background: heroPhotoBackground,
+        boxShadow: heroPhotoShadowStrong,
+        padding: themeMode === 'dark' ? '0.32rem' : '0.52rem',
+        border: themeMode === 'dark' ? '1px solid rgba(247,243,255,0.16)' : '1px solid rgba(26,21,52,0.14)',
       };
-      heroCardPhotoClass = 'w-full h-full object-cover rounded-2xl';
-      heroCardSummaryClass = 'text-sm leading-relaxed text-left';
-      heroCardIconColor = accentColor;
+      heroCardPhotoClass = 'w-full h-full object-cover rounded-[28px]';
+      heroCardSummaryClass = 'text-sm leading-relaxed text-center';
+      heroCardIconColor = '#ffffff';
       sectionTitleColor = themeMode === 'dark' ? '#f7f3ff' : '#1a1534';
       sectionBodyColor = themeMode === 'dark' ? '#dcd5f1' : '#4d415a';
       surfaceBackground = themeMode === 'dark' ? 'rgba(18,14,32,0.85)' : '#ffffff';
-      surfaceBorderColor = themeMode === 'dark' ? 'rgba(247,243,255,0.08)' : `${secondaryColor}18`;
+      surfaceBorderColor = themeMode === 'dark' ? 'rgba(247,243,255,0.08)' : `${normalizedSecondaryColor}18`;
       softSurfaceBackground = themeMode === 'dark' ? 'rgba(247,243,255,0.06)' : '#f7f6fb';
       chipTextColor = themeMode === 'dark' ? '#f7f3ff' : secondaryColor;
-      chipBorderColor = themeMode === 'dark' ? 'rgba(247,243,255,0.12)' : `${secondaryColor}18`;
+      chipBorderColor = themeMode === 'dark' ? 'rgba(247,243,255,0.12)' : `${normalizedSecondaryColor}18`;
       timelineBackground = themeMode === 'dark'
         ? 'linear-gradient(180deg, rgba(5,3,12,0.95) 0%, rgba(9,7,20,0.95) 100%)'
         : '#f8f7fa';
@@ -397,45 +717,40 @@ export function PublicPortfolio({
         borderColor: themeMode === 'dark' ? 'rgba(255,255,255,0.14)' : `${primaryColor}20`,
         opacity: 1,
       };
-      heroContainerClass = 'max-w-6xl mx-auto relative z-10 flex flex-col md:flex-row gap-12 items-center';
-      heroButtonGroupClass = 'flex flex-wrap gap-3 mb-8 justify-center md:justify-start';
-      heroMetaAlignmentClass = 'flex flex-wrap items-center justify-center gap-2 text-sm md:justify-start';
+      heroSectionBackground = themeMode === 'dark'
+        ? `linear-gradient(135deg, ${withAlpha(primaryColor, 0.52, 'rgba(20,15,40,0.95)')}, ${withAlpha(accentColor, 0.45, 'rgba(10,6,22,0.9)')})`
+        : `linear-gradient(135deg, ${withAlpha(primaryColor, 0.18, '#ffffff')}, ${withAlpha(accentColor, 0.15, '#ffffff')})`;
+      heroContainerClass = 'max-w-6xl mx-auto relative z-10 flex flex-col md:flex-row-reverse gap-12 items-center md:items-start';
+      heroTextContainerClass = `${heroTextAlignmentClass} flex flex-col items-start md:items-start gap-6 order-1 w-full md:max-w-2xl`;
+      heroCardColumnClass = 'order-2 w-full md:w-auto flex justify-center md:justify-start';
+      heroButtonGroupClass = 'flex flex-wrap items-center gap-3 md:gap-4 mb-6 justify-center md:justify-start';
+      heroHighlightChipWrapperClass = 'flex flex-wrap items-center gap-3 mb-7 justify-center md:justify-start';
+      heroStackListClass = 'flex flex-wrap gap-x-5 gap-y-3 text-sm font-semibold tracking-wide mt-6 justify-center md:justify-start';
+      heroStackListStyle = { color: heroMetaTextColor };
       heroParagraphColor = themeMode === 'dark' ? 'rgba(247,243,255,0.82)' : '#4d415a';
-      heroSecondaryButtonStyle = {
-        border: `1px solid ${themeMode === 'dark' ? 'rgba(247,243,255,0.18)' : `${secondaryColor}25`}`,
-        color: heroHeadingColor,
-        backgroundColor: 'transparent',
+      heroCardContainerClass = 'rounded-[30px] border border-white/18 px-8 py-9 shadow-[0_50px_95px_-45px_rgba(8,5,18,0.72)] backdrop-blur-xl';
+      heroCardWrapperClass = 'flex flex-col items-center gap-7 text-center w-full';
+      heroCardContentClass = 'flex flex-col items-center gap-5 w-full text-center';
+      heroCardContactWrapperClass = 'space-y-3 text-sm w-full text-center';
+      heroCardContactItemClass = 'flex items-center gap-3 justify-center text-base font-medium';
+      heroCardSocialWrapperClass = 'flex flex-wrap gap-3 mt-5 justify-center';
+      heroCardSocialButtonClass = 'inline-flex items-center justify-center rounded-full px-3 py-2 text-xs font-semibold border transition-all hover:-translate-y-0.5 text-white';
+      heroCardSocialButtonStyle = {
+        backgroundColor: withAlpha('#ffffff', 0.18, 'rgba(255,255,255,0.18)'),
+        color: '#ffffff',
+        borderColor: withAlpha('#ffffff', 0.32, 'rgba(255,255,255,0.32)'),
+        boxShadow: `0 20px 38px -26px ${withAlpha('#000000', 0.6, 'rgba(0,0,0,0.45)')}`,
       };
-      heroCardContainerClass = themeMode === 'dark'
-        ? 'rounded-[30px] border border-white/12 p-6 md:p-8 shadow-[0_45px_80px_-35px_rgba(5,3,12,0.9)] backdrop-blur-xl'
-        : 'rounded-[30px] border border-[#2d255020] p-6 md:p-8 shadow-xl';
-      heroCardWrapperClass = 'flex flex-col md:flex-row items-center md:items-start gap-8 text-left w-full';
-      heroCardContentClass = 'flex flex-col items-start gap-5 w-full';
-      heroCardContactWrapperClass = 'space-y-3 text-sm w-full';
-      heroCardContactItemClass = 'flex items-center gap-3 justify-start';
-      heroCardSocialWrapperClass = 'flex flex-wrap gap-3 mt-4';
-      heroCardSocialButtonClass = 'inline-flex items-center justify-center rounded-full px-3 py-2 text-xs font-semibold transition-all hover:-translate-y-0.5';
-      heroCardSocialButtonStyle = themeMode === 'dark'
-        ? {
-            backgroundColor: 'rgba(247,243,255,0.12)',
-            color: '#f7f3ff',
-            borderColor: 'rgba(247,243,255,0.2)',
-          }
-        : {
-            backgroundColor: '#ffffff',
-            color: accentColor,
-            borderColor: `${accentColor}35`,
-            boxShadow: `0 18px 40px -24px ${accentColor}70`,
-          };
-      heroCardPhotoWrapperClass = 'relative w-32 h-32 md:w-40 md:h-40 rounded-full p-1.5 shadow-xl';
+      heroCardPhotoWrapperClass = 'relative w-44 h-44 md:w-52 md:h-52 rounded-full flex items-center justify-center overflow-hidden shadow-[0_48px_108px_-52px_rgba(26,21,52,0.55)]';
       heroCardPhotoWrapperStyle = {
-        background: `linear-gradient(135deg, ${accentColor}, ${primaryColor})`,
-        boxShadow: `0 32px 60px -28px ${accentColor}65`,
-        padding: 0,
+        background: heroPhotoBackground,
+        boxShadow: heroPhotoShadowStrong,
+        padding: themeMode === 'dark' ? '0.38rem' : '0.48rem',
+        border: themeMode === 'dark' ? '1px solid rgba(247,243,255,0.2)' : '1px solid rgba(26,21,52,0.14)',
       };
       heroCardPhotoClass = 'w-full h-full object-cover rounded-full';
-      heroCardSummaryClass = 'text-sm leading-relaxed text-left';
-      heroCardIconColor = themeMode === 'dark' ? '#f7f3ff' : accentColor;
+      heroCardSummaryClass = 'text-sm leading-relaxed text-center';
+      heroCardIconColor = '#ffffff';
       break;
     }
     case 'masonry': {
@@ -465,15 +780,19 @@ export function PublicPortfolio({
         borderColor: 'transparent',
         opacity: 1,
       };
-      heroContainerClass = 'max-w-6xl mx-auto relative z-10 grid md:grid-cols-[1.1fr_0.9fr] gap-12 items-center';
-      heroSecondaryButtonStyle = {
-        border: `2px solid rgba(255,255,255,0.25)`,
-        color: '#ffffff',
-        backgroundColor: 'transparent',
-      };
-      heroCardContainerClass = 'rounded-[36px] border border-white/18 p-8 shadow-[0_45px_85px_-35px_rgba(8,5,18,0.92)] backdrop-blur-2xl';
-      heroCardWrapperClass = 'flex flex-col items-center gap-6 text-center w-full';
-      heroCardContentClass = 'flex flex-col items-center gap-5 w-full';
+      heroSectionBackground = themeMode === 'dark'
+        ? `linear-gradient(125deg, ${withAlpha(primaryColor, 0.68, 'rgba(5,3,12,0.92)')}, ${withAlpha(accentColor, 0.6, 'rgba(8,5,18,0.9)')})`
+        : `linear-gradient(125deg, ${withAlpha(primaryColor, 0.2, '#f8f5ff')}, ${withAlpha(accentColor, 0.18, '#f4f0ff')})`;
+      heroContainerClass = 'max-w-6xl mx-auto relative z-10 flex flex-col md:flex-row gap-12 items-center';
+      heroTextAlignmentClass = 'text-white';
+      heroTextContainerClass = `${heroTextAlignmentClass} flex flex-col items-center md:items-start text-center md:text-left gap-6 order-2 w-full md:max-w-xl`;
+      heroCardColumnClass = 'order-1 w-full md:w-auto flex justify-center md:justify-start';
+      heroHighlightChipWrapperClass = 'flex flex-wrap items-center gap-3 mb-8 justify-center md:justify-start';
+      heroStackListClass = 'flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold tracking-wide mt-6 justify-center md:justify-start';
+      heroStackListStyle = { color: heroMetaTextColor };
+      heroCardContainerClass = 'max-w-xl w-full rounded-[44px] border border-white/18 p-10 shadow-[0_60px_110px_-45px_rgba(8,5,18,0.9)] backdrop-blur-2xl';
+      heroCardWrapperClass = 'flex flex-col items-center gap-8 text-center w-full';
+      heroCardContentClass = 'flex flex-col items-center gap-6 w-full';
       heroCardContactWrapperClass = 'space-y-3 text-sm w-full';
       heroCardContactItemClass = 'flex items-center gap-2 justify-center';
       heroCardSocialWrapperClass = 'flex flex-wrap justify-center gap-3 mt-6';
@@ -483,13 +802,14 @@ export function PublicPortfolio({
         color: '#ffffff',
         border: '1px solid rgba(255,255,255,0.22)',
       };
-      heroCardPhotoWrapperClass = 'relative w-40 h-48 rounded-[32px] overflow-hidden shadow-[0_40px_75px_-32px_rgba(5,3,12,0.95)]';
+      heroCardPhotoWrapperClass = 'relative w-48 h-60 md:w-60 md:h-72 rounded-[38px] flex items-center justify-center overflow-hidden shadow-[0_60px_110px_-45px_rgba(8,5,18,0.85)]';
       heroCardPhotoWrapperStyle = {
-        background: `linear-gradient(135deg, ${accentColor}, ${primaryColor})`,
-        boxShadow: `0 40px 75px -32px ${accentColor}85`,
-        padding: 0,
+        background: heroPhotoBackground,
+        boxShadow: heroPhotoShadowStrong,
+        padding: themeMode === 'dark' ? '0.35rem' : '0.55rem',
+        border: themeMode === 'dark' ? '1px solid rgba(255,255,255,0.18)' : '1px solid rgba(26,21,52,0.12)',
       };
-      heroCardPhotoClass = 'w-full h-full object-cover rounded-[28px]';
+      heroCardPhotoClass = 'w-full h-full object-cover rounded-[30px]';
       heroCardSummaryClass = 'text-sm leading-relaxed text-center text-white/80';
       heroCardIconColor = '#ffffff';
       break;
@@ -524,7 +844,13 @@ export function PublicPortfolio({
       heroParagraphColor = themeMode === 'dark' ? '#dcd5f1' : '#443356';
       heroKickerColor = themeMode === 'dark' ? '#bfb2e8' : '#8a7ca0';
       heroMetaTextColor = themeMode === 'dark' ? 'rgba(247,243,255,0.75)' : '#4d3e63';
-      heroMetaLabelColor = themeMode === 'dark' ? 'rgba(247,243,255,0.6)' : '#6b5d7a';
+      heroTextAlignmentClass = themeMode === 'dark' ? 'text-white' : 'text-[#1c1538]';
+      heroContainerClass = 'max-w-6xl mx-auto relative z-10 flex flex-col md:flex-row items-center md:items-start gap-12';
+      heroTextContainerClass = `${heroTextAlignmentClass} flex flex-col items-start gap-6 order-1 w-full md:max-w-2xl`;
+      heroCardColumnClass = 'order-2 w-full md:w-auto flex justify-center md:justify-end';
+      heroHighlightChipWrapperClass = 'flex flex-wrap items-center gap-3 mb-8';
+      heroStackListClass = 'flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold tracking-wide mt-6';
+      heroStackListStyle = { color: heroMetaTextColor };
       heroLanguageActiveStyle = {
         backgroundColor: themeMode === 'dark' ? 'rgba(247,243,255,0.18)' : 'rgba(28,21,56,0.12)',
         color: heroHeadingColor,
@@ -537,9 +863,11 @@ export function PublicPortfolio({
         borderColor: 'transparent',
         opacity: 0.7,
       };
-      heroCardBackground = themeMode === 'dark' ? 'rgba(24,18,44,0.85)' : '#ffffff';
-      heroCardBorderColor = themeMode === 'dark' ? 'rgba(247,243,255,0.08)' : 'rgba(28,21,56,0.12)';
-      heroCardTextColor = themeMode === 'dark' ? 'rgba(247,243,255,0.8)' : '#4d3e63';
+      heroCardBackground = heroCardBackgroundGradient;
+      heroCardBorderColor = themeMode === 'dark'
+        ? withAlpha('#ffffff', 0.26, 'rgba(247,243,255,0.22)')
+        : withAlpha(primaryColor, 0.3, 'rgba(28,21,56,0.16)');
+      heroCardTextColor = themeMode === 'dark' ? 'rgba(247,243,255,0.92)' : 'rgba(255,255,255,0.94)';
       sectionTitleColor = themeMode === 'dark' ? '#f7f3ff' : '#1c1538';
       sectionBodyColor = themeMode === 'dark' ? '#dcd5f1' : '#4d3e63';
       surfaceBackground = themeMode === 'dark' ? 'rgba(24,18,44,0.85)' : '#ffffff';
@@ -558,27 +886,29 @@ export function PublicPortfolio({
         borderColor: themeMode === 'dark' ? 'rgba(247,243,255,0.18)' : 'rgba(28,21,56,0.12)',
         opacity: 1,
       };
-      heroCardContainerClass = 'rounded-[36px] border border-white/14 p-8 shadow-[0_55px_90px_-45px_rgba(10,6,25,0.9)] backdrop-blur-2xl';
-      heroCardWrapperClass = 'flex flex-col md:flex-row items-center md:items-start gap-8 text-left w-full';
-      heroCardContentClass = 'flex flex-col items-start gap-5 w-full';
-      heroCardContactWrapperClass = 'space-y-3 text-sm w-full';
-      heroCardContactItemClass = 'flex items-center gap-3 justify-start';
-      heroCardSocialWrapperClass = 'flex flex-wrap gap-3 mt-4';
-      heroCardSocialButtonClass = 'inline-flex items-center justify-center rounded-full px-3 py-2 text-xs font-semibold transition-all hover:-translate-y-0.5';
+      heroCardContainerClass = 'max-w-xl w-full rounded-[44px] border border-white/18 px-10 py-11 shadow-[0_70px_120px_-50px_rgba(10,6,25,0.85)] backdrop-blur-2xl';
+      heroCardWrapperClass = 'flex flex-col items-center gap-8 text-center w-full';
+      heroCardContentClass = 'flex flex-col items-center gap-5 w-full text-center';
+      heroCardContactWrapperClass = 'space-y-3 text-sm w-full text-center';
+      heroCardContactItemClass = 'flex items-center gap-3 justify-center text-base font-medium';
+      heroCardSocialWrapperClass = 'flex flex-wrap gap-3 mt-5 justify-center';
+      heroCardSocialButtonClass = 'inline-flex items-center justify-center rounded-full px-3 py-2 text-xs font-semibold transition-all hover:-translate-y-0.5 text-white border';
       heroCardSocialButtonStyle = {
-        backgroundColor: 'rgba(247,243,255,0.16)',
-        color: '#f7f3ff',
-        borderColor: 'rgba(247,243,255,0.24)',
+        backgroundColor: withAlpha('#ffffff', 0.18, 'rgba(247,243,255,0.18)'),
+        color: '#ffffff',
+        borderColor: withAlpha('#ffffff', 0.3, 'rgba(247,243,255,0.3)'),
+        boxShadow: `0 22px 44px -30px ${withAlpha('#000000', 0.55, 'rgba(0,0,0,0.42)')}`,
       };
-      heroCardPhotoWrapperClass = 'relative w-36 h-36 md:w-40 md:h-40 rounded-[28px] overflow-hidden shadow-2xl';
+      heroCardPhotoWrapperClass = 'relative w-44 h-44 md:w-56 md:h-56 rounded-[34px] flex items-center justify-center overflow-hidden shadow-[0_60px_125px_-52px_rgba(10,6,25,0.82)]';
       heroCardPhotoWrapperStyle = {
-        background: `linear-gradient(135deg, ${primaryColor}, ${accentColor})`,
-        boxShadow: `0 38px 85px -40px ${accentColor}85`,
-        padding: 0,
+        background: heroPhotoBackground,
+        boxShadow: heroPhotoShadowStrong,
+        padding: themeMode === 'dark' ? '0.34rem' : '0.52rem',
+        border: themeMode === 'dark' ? '1px solid rgba(247,243,255,0.22)' : '1px solid rgba(28,21,56,0.16)',
       };
-      heroCardPhotoClass = 'w-full h-full object-cover rounded-[24px]';
-      heroCardSummaryClass = 'text-sm leading-relaxed text-left text-white/85';
-      heroCardIconColor = '#f7f3ff';
+      heroCardPhotoClass = 'w-full h-full object-cover rounded-[28px]';
+      heroCardSummaryClass = 'text-sm leading-relaxed text-center text-white/85';
+      heroCardIconColor = '#ffffff';
       break;
     }
     case 'editorial': {
@@ -604,13 +934,20 @@ export function PublicPortfolio({
         borderColor: 'transparent',
         opacity: 0.75,
       };
-      heroSectionBackground = themeMode === 'dark' ? '#120d25' : '#fffdfa';
-      heroContainerClass = 'max-w-6xl mx-auto relative z-10 grid md:grid-cols-[1.05fr_0.95fr] gap-12 items-center';
+      heroSectionBackground = themeMode === 'dark'
+        ? `linear-gradient(140deg, ${withAlpha(primaryColor, 0.6, '#120d25')}, ${withAlpha(accentColor, 0.55, '#1a1338')})`
+        : `linear-gradient(140deg, ${withAlpha(primaryColor, 0.22, '#fffdfa')}, ${withAlpha(accentColor, 0.16, '#fff6fb')})`;
+      heroContainerClass = 'max-w-6xl mx-auto relative z-10 flex flex-col md:flex-row-reverse items-center md:items-start gap-12';
+      heroTextAlignmentClass = themeMode === 'dark' ? 'text-white' : 'text-[#1a1534]';
+      heroTextContainerClass = `${heroTextAlignmentClass} flex flex-col items-start gap-6 order-1 w-full md:max-w-2xl`;
+      heroCardColumnClass = 'order-2 w-full md:w-auto flex justify-center md:justify-start';
+      heroHighlightChipWrapperClass = 'flex flex-wrap items-center gap-3 mb-8';
+      heroStackListClass = 'flex flex-wrap gap-x-6 gap-y-3 text-sm font-semibold tracking-wide mt-6';
+      heroStackListStyle = { color: heroMetaTextColor };
       heroHeadingColor = themeMode === 'dark' ? '#f7f3ff' : '#1a1534';
       heroParagraphColor = themeMode === 'dark' ? '#d9d0f1' : '#4d415a';
       heroKickerColor = themeMode === 'dark' ? '#c5bbeb' : '#8a7ca0';
       heroMetaTextColor = themeMode === 'dark' ? 'rgba(247,243,255,0.8)' : '#4d415a';
-      heroMetaLabelColor = themeMode === 'dark' ? 'rgba(247,243,255,0.6)' : '#6b5d7a';
       heroLanguageActiveStyle = {
         backgroundColor: themeMode === 'dark' ? 'rgba(247,243,255,0.18)' : 'rgba(28,21,56,0.12)',
         color: heroHeadingColor,
@@ -623,15 +960,12 @@ export function PublicPortfolio({
         borderColor: 'transparent',
         opacity: 0.7,
       };
-      heroSecondaryButtonStyle = {
-        border: `2px solid ${themeMode === 'dark' ? 'rgba(247,243,255,0.18)' : 'rgba(28,21,56,0.18)'}`,
-        color: heroHeadingColor,
-        backgroundColor: 'transparent',
-      };
-      heroCardBackground = themeMode === 'dark' ? '#1a1534' : '#ffffff';
-      heroCardBorderColor = themeMode === 'dark' ? 'rgba(247,243,255,0.08)' : 'rgba(28,21,56,0.12)';
-      heroCardTextColor = themeMode === 'dark' ? '#dcd5f1' : '#4d415a';
-      heroCardHeadingColor = themeMode === 'dark' ? '#f7f3ff' : '#1a1534';
+      heroCardBackground = heroCardBackgroundGradient;
+      heroCardBorderColor = themeMode === 'dark'
+        ? withAlpha('#ffffff', 0.26, 'rgba(247,243,255,0.22)')
+        : withAlpha(primaryColor, 0.3, 'rgba(28,21,56,0.18)');
+      heroCardTextColor = themeMode === 'dark' ? 'rgba(247,243,255,0.92)' : 'rgba(255,255,255,0.94)';
+      heroCardHeadingColor = '#ffffff';
       sectionTitleColor = themeMode === 'dark' ? '#f7f3ff' : '#1a1534';
       sectionBodyColor = themeMode === 'dark' ? '#dcd5ef' : '#3e3358';
       surfaceBackground = themeMode === 'dark' ? '#161129' : '#ffffff';
@@ -651,38 +985,75 @@ export function PublicPortfolio({
         borderColor: themeMode === 'dark' ? 'rgba(247,243,255,0.2)' : 'rgba(28,21,56,0.15)',
         opacity: 1,
       };
-      heroCardContainerClass = 'rounded-[40px] border p-8 shadow-[0_55px_95px_-40px_rgba(26,21,54,0.45)]';
-      heroCardWrapperClass = 'flex flex-col md:flex-row items-center md:items-start gap-9 text-left w-full';
-      heroCardContentClass = 'flex flex-col items-start gap-5 w-full';
-      heroCardContactWrapperClass = 'space-y-3 text-sm w-full';
-      heroCardContactItemClass = 'flex items-center gap-3 justify-start';
-      heroCardSocialWrapperClass = 'flex flex-wrap gap-3 mt-5';
-      heroCardSocialButtonClass = 'inline-flex items-center justify-center rounded-full px-3 py-2 text-xs font-semibold border transition-all hover:-translate-y-0.5';
-      heroCardSocialButtonStyle = themeMode === 'dark'
-        ? {
-            backgroundColor: 'rgba(247,243,255,0.12)',
-            color: '#f7f3ff',
-            borderColor: 'rgba(247,243,255,0.24)',
-          }
-        : {
-            backgroundColor: '#fff4ea',
-            color: accentColor,
-            borderColor: `${accentColor}32`,
-          };
-      heroCardPhotoWrapperClass = 'relative w-36 h-44 rounded-[28px] overflow-hidden shadow-2xl';
-      heroCardPhotoWrapperStyle = {
-        background: themeMode === 'dark' ? 'rgba(247,243,255,0.08)' : '#ffffff',
-        boxShadow: `0 38px 80px -38px ${accentColor}40`,
-        padding: 0,
+      heroCardContainerClass = 'max-w-xl w-full rounded-[44px] border px-10 py-11 shadow-[0_70px_120px_-50px_rgba(26,21,54,0.5)] backdrop-blur-xl';
+      heroCardWrapperClass = 'flex flex-col items-center gap-8 text-center w-full';
+      heroCardContentClass = 'flex flex-col items-center gap-5 w-full text-center';
+      heroCardContactWrapperClass = 'space-y-3 text-sm w-full text-center';
+      heroCardContactItemClass = 'flex items-center gap-3 justify-center text-base font-medium';
+      heroCardSocialWrapperClass = 'flex flex-wrap gap-3 mt-5 justify-center';
+      heroCardSocialButtonClass = 'inline-flex items-center justify-center rounded-full px-3 py-2 text-xs font-semibold border transition-all hover:-translate-y-0.5 text-white';
+      heroCardSocialButtonStyle = {
+        backgroundColor: withAlpha('#ffffff', 0.18, 'rgba(255,255,255,0.18)'),
+        color: '#ffffff',
+        borderColor: withAlpha('#ffffff', 0.3, 'rgba(255,255,255,0.3)'),
+        boxShadow: `0 22px 44px -30px ${withAlpha('#000000', 0.55, 'rgba(0,0,0,0.42)')}`,
       };
-      heroCardPhotoClass = 'w-full h-full object-cover rounded-[24px]';
-      heroCardSummaryClass = 'text-sm leading-relaxed text-left';
-      heroCardIconColor = themeMode === 'dark' ? '#f7f3ff' : accentColor;
+      heroCardPhotoWrapperClass = 'relative w-[11.5rem] h-[14.5rem] md:w-[15rem] md:h-[18rem] rounded-[36px] flex items-center justify-center overflow-hidden shadow-[0_70px_130px_-52px_rgba(26,21,54,0.55)]';
+      heroCardPhotoWrapperStyle = {
+        background: heroPhotoBackground,
+        boxShadow: heroPhotoShadowStrong,
+        padding: themeMode === 'dark' ? '0.34rem' : '0.58rem',
+        border: themeMode === 'dark' ? '1px solid rgba(247,243,255,0.2)' : '1px solid rgba(26,21,56,0.16)',
+      };
+      heroCardPhotoClass = 'w-full h-full object-cover rounded-[30px]';
+      heroCardSummaryClass = 'text-sm leading-relaxed text-center';
+      heroCardIconColor = '#ffffff';
       break;
     }
     default:
       break;
   }
+
+  const navActiveBackgroundFallback = typeof navLanguageActiveStyle.backgroundColor === 'string'
+    ? navLanguageActiveStyle.backgroundColor
+    : navBackground;
+  const navInactiveColorFallback = typeof navLanguageInactiveStyle.color === 'string'
+    ? navLanguageInactiveStyle.color
+    : navTextColor;
+  const navBackButtonBackgroundFallback = typeof navBackButtonStyle.backgroundColor === 'string'
+    ? navBackButtonStyle.backgroundColor
+    : navBackground;
+  const computedNavTextColor = chooseTextColor(primaryColor, '#1a1534', '#ffffff');
+  const computedNavBackground = withAlpha(primaryColor, themeMode === 'dark' ? 0.88 : 0.95, navBackground);
+  const computedNavBorder = withAlpha(
+    computedNavTextColor === '#ffffff' ? '#ffffff' : primaryColor,
+    themeMode === 'dark' ? 0.22 : 0.18,
+    navBorderColor,
+  );
+  const computedNavInactiveText = withAlpha(
+    computedNavTextColor,
+    themeMode === 'dark' ? 0.72 : 0.68,
+    navInactiveColorFallback,
+  );
+
+  navBackground = computedNavBackground;
+  navTextColor = computedNavTextColor;
+  navBorderColor = computedNavBorder;
+  navLanguageActiveStyle = {
+    ...navLanguageActiveStyle,
+    backgroundColor: withAlpha(primaryColor, themeMode === 'dark' ? 0.26 : 0.16, navActiveBackgroundFallback),
+    color: computedNavTextColor,
+  };
+  navLanguageInactiveStyle = {
+    ...navLanguageInactiveStyle,
+    color: computedNavInactiveText,
+  };
+  navBackButtonStyle = {
+    ...navBackButtonStyle,
+    backgroundColor: withAlpha(primaryColor, themeMode === 'dark' ? 0.32 : 0.2, navBackButtonBackgroundFallback),
+    color: computedNavTextColor,
+    borderColor: computedNavBorder,
+  };
 
   const resolvedProfile = useMemo(() => {
     const socialLinks: Required<NonNullable<UserProfile['socialLinks']>> = {
@@ -847,22 +1218,75 @@ export function PublicPortfolio({
   const fallbackExperiences: Experience[] = [];
   const fallbackEducation: UserProfile['education'] = [];
 
-  const projectsToShow = useMemo(
-    () => (projects.length > 0 ? projects : fallbackProjects),
-    [projects],
-  );
-  const experiencesToShow = useMemo(
-    () => (experiences.length > 0 ? experiences : fallbackExperiences),
-    [experiences],
-  );
-  const articlesToShow = useMemo(
-    () => articles.filter((article) => article.showInPortfolio !== false),
-    [articles],
-  );
-  const cvArticles = useMemo(
-    () => articles.filter((article) => article.showInCv !== false),
-    [articles],
-  );
+  const activeCv = useMemo(() => {
+    if (cvs.length === 0) {
+      return null;
+    }
+
+    if (cvIdParam) {
+      const byId = cvs.find((cv) => cv.id === cvIdParam);
+      if (byId) {
+        return byId;
+      }
+    }
+
+    const byLanguage = cvs.find((cv) => cv.language === cvLanguage);
+    return byLanguage ?? cvs[0];
+  }, [cvs, cvIdParam, cvLanguage]);
+
+  const projectsToShow = useMemo(() => {
+    if (projects.length === 0) {
+      return fallbackProjects;
+    }
+
+    const selection = activeCv?.selectedProjects ?? [];
+    if (!cvIdParam || !selection.length) {
+      return projects;
+    }
+
+    const selectedIds = new Set(selection);
+    const filtered = projects.filter((project) => selectedIds.has(project.id));
+    return filtered.length > 0 ? filtered : projects;
+  }, [projects, activeCv, cvIdParam]);
+
+  const experiencesToShow = useMemo(() => {
+    if (experiences.length === 0) {
+      return fallbackExperiences;
+    }
+
+    const selection = activeCv?.selectedExperiences ?? [];
+    if (!cvIdParam || !selection.length) {
+      return experiences;
+    }
+
+    const selectedIds = new Set(selection);
+    const filtered = experiences.filter((experience) => selectedIds.has(experience.id));
+    return filtered.length > 0 ? filtered : experiences;
+  }, [experiences, activeCv, cvIdParam]);
+
+  const articlesToShow = useMemo(() => {
+    const base = articles.filter((article) => article.showInPortfolio !== false);
+    const selection = activeCv?.selectedArticles ?? [];
+    if (!cvIdParam || !selection.length) {
+      return base;
+    }
+
+    const selectedIds = new Set(selection);
+    const filtered = base.filter((article) => selectedIds.has(article.id));
+    return filtered.length > 0 ? filtered : base;
+  }, [articles, activeCv, cvIdParam]);
+
+  const cvArticles = useMemo(() => {
+    const base = articles.filter((article) => article.showInCv !== false);
+    const selection = activeCv?.selectedArticles ?? [];
+    if (!selection.length) {
+      return base;
+    }
+
+    const selectedIds = new Set(selection);
+    const filtered = base.filter((article) => selectedIds.has(article.id));
+    return filtered.length > 0 ? filtered : base;
+  }, [articles, activeCv]);
   const profileSkills = useMemo(
     () => (resolvedProfile.skills.length ? resolvedProfile.skills : []),
     [resolvedProfile.skills],
@@ -877,11 +1301,53 @@ export function PublicPortfolio({
     [projectsToShow],
   );
   const highlightTags = useMemo(() => projectTags.slice(0, 8), [projectTags]);
+  const { heroHighlightChips, aboutSkills } = useMemo(() => {
+    if (profileSkills.length === 0) {
+      return { heroHighlightChips: [] as string[], aboutSkills: [] as string[] };
+    }
+    const highlights = profileSkills.slice(0, 4);
+    const remaining = profileSkills.slice(4);
+    return { heroHighlightChips: highlights, aboutSkills: remaining };
+  }, [profileSkills]);
+  const heroStackTags = useMemo(() => {
+    if (projectTags.length > 0) {
+      return projectTags.slice(0, 10);
+    }
+    if (profileSkills.length > 0) {
+      return profileSkills.slice(0, 10);
+    }
+    return [] as string[];
+  }, [projectTags, profileSkills]);
+  const heroInfoChips = useMemo(() => {
+    if (heroHighlightChips.length > 0) {
+      return heroHighlightChips;
+    }
+    const fallback: string[] = [];
+    if (resolvedProfile.location) {
+      fallback.push(resolvedProfile.location);
+    }
+    if (resolvedProfile.title) {
+      fallback.push(resolvedProfile.title);
+    }
+    return fallback;
+  }, [heroHighlightChips, resolvedProfile.location, resolvedProfile.title]);
+  const aboutSkillsToDisplay = useMemo(() => {
+    if (aboutSkills.length > 0) {
+      return aboutSkills;
+    }
+    return profileSkills;
+  }, [aboutSkills, profileSkills]);
 
   const certificates = useMemo(
     () => experiencesToShow.filter((exp) => exp.certificateUrl && exp.showCertificate),
     [experiencesToShow],
   );
+
+  useEffect(() => {
+    if (activeCv && cvLanguage !== activeCv.language) {
+      setCvLanguage(activeCv.language);
+    }
+  }, [activeCv, cvLanguage]);
 
   const availableCvLanguages = useMemo(() => {
     const unique = Array.from(new Set(cvs.map((cv) => cv.language)));
@@ -913,7 +1379,12 @@ export function PublicPortfolio({
         setCvLanguage(langParam as CV['language']);
       }
     }
-  }, [availableCvLanguages, cvLanguage]);
+
+    const idParam = params.get('cvId');
+    if (cvIdParam !== idParam) {
+      setCvIdParam(idParam);
+    }
+  }, [availableCvLanguages, cvIdParam, cvLanguage]);
 
   const translatableItems = useMemo(() => {
     const items: Array<{ key: string; text: string }> = [];
@@ -1119,6 +1590,82 @@ export function PublicPortfolio({
     return translated && translated.trim().length > 0 ? translated : fallback;
   };
 
+  const formatEducationTimeline = (education: EducationItem) => {
+    if (!education) {
+      return '';
+    }
+
+    const direct = education.period?.trim();
+    if (direct) {
+      return direct;
+    }
+
+    const start = education.startYear?.trim();
+    const end = education.endYear?.trim();
+
+    if (start && end) {
+      return `${start} - ${end}`;
+    }
+
+    if (start && !end) {
+      return `${start} - ${translateForLocale('public.experiences.current', 'Atual')}`;
+    }
+
+    return end ?? '';
+  };
+
+  const resolveMediaEmbed = (rawUrl?: string | null) => {
+    if (!rawUrl) {
+      return null;
+    }
+
+    try {
+      const parsed = new URL(rawUrl);
+      const host = parsed.hostname.toLowerCase();
+
+      if (host.includes('youtube.com')) {
+        const videoId = parsed.searchParams.get('v');
+        if (videoId) {
+          const params = new URLSearchParams();
+          const start = parsed.searchParams.get('t');
+          if (start) {
+            params.set('start', start.replace(/\D/g, ''));
+          }
+          const suffix = params.size > 0 ? `?${params.toString()}` : '';
+          return { src: `https://www.youtube.com/embed/${videoId}${suffix}` };
+        }
+      }
+
+      if (host === 'youtu.be') {
+        const videoId = parsed.pathname.replace('/', '').trim();
+        if (videoId) {
+          return { src: `https://www.youtube.com/embed/${videoId}` };
+        }
+      }
+
+      const vimeoMatch = rawUrl.match(/vimeo\.com\/(\d+)/);
+      if (vimeoMatch?.[1]) {
+        return { src: `https://player.vimeo.com/video/${vimeoMatch[1]}` };
+      }
+
+      if (host.includes('spotify.com')) {
+        return {
+          src: rawUrl.replace('open.spotify.com/', 'open.spotify.com/embed/'),
+        };
+      }
+
+      if (host.includes('soundcloud.com')) {
+        return {
+          src: `https://w.soundcloud.com/player/?url=${encodeURIComponent(rawUrl)}`,
+        };
+      }
+    } catch (error) {
+      console.error('Failed to resolve media embed', error);
+    }
+
+    return null;
+  };
+
   const fullBio = getTranslatedField('bio');
   const aboutBio = fullBio;
   const aboutParagraphs = useMemo(() => {
@@ -1150,11 +1697,20 @@ export function PublicPortfolio({
     return `${normalized.slice(0, limit).trimEnd()}…`;
   }, [fullBio, layout]);
 
-  const heroCardShouldShowSummary = heroSummaryLayouts.has(layout) && heroBio.length > 0;
+  const heroCardShouldShowSummary = false;
 
-  const hasSocialLinks = useMemo(
-    () => Object.values(resolvedProfile.socialLinks).some((value) => Boolean(value)),
-    [resolvedProfile.socialLinks],
+  const heroCardSocialLinks = useMemo(() => {
+    const linkedin = resolvedProfile.socialLinks.linkedin?.trim() ?? '';
+    const instagram = resolvedProfile.socialLinks.instagram?.trim() ?? '';
+    return { linkedin, instagram };
+  }, [resolvedProfile.socialLinks.instagram, resolvedProfile.socialLinks.linkedin]);
+
+  const heroCardHasSocialLinks = Boolean(heroCardSocialLinks.linkedin || heroCardSocialLinks.instagram);
+
+  const heroCardVisible = heroCardLayouts.has(layout) && (
+    Boolean(resolvedProfile.photo)
+      || Boolean(resolvedProfile.email)
+      || heroCardHasSocialLinks
   );
 
   const handleCvDownload = () => {
@@ -1240,6 +1796,34 @@ export function PublicPortfolio({
     window.setTimeout(() => cleanup(iframe), 12000);
   };
 
+  performCvDownloadRef.current = handleCvDownload;
+
+  const requestCvDownload = (language: CV['language']) => {
+    if (previewMode) {
+      return;
+    }
+    if (language === cvLanguage) {
+      handleCvDownload();
+      return;
+    }
+    pendingCvDownloadLanguage.current = language;
+    setCvLanguage(language);
+  };
+
+  useEffect(() => {
+    if (!pendingCvDownloadLanguage.current) {
+      return;
+    }
+    if (pendingCvDownloadLanguage.current !== cvLanguage || previewMode) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      performCvDownloadRef.current();
+    }, 80);
+    pendingCvDownloadLanguage.current = null;
+    return () => window.clearTimeout(timeoutId);
+  }, [cvLanguage, previewMode]);
+
   const projectGridClass = (() => {
     switch (layout) {
       case 'list':
@@ -1269,8 +1853,44 @@ export function PublicPortfolio({
   ];
 
   const rootClassName = previewMode ? 'w-full' : 'min-h-screen';
+  const canRetry = shouldSelfFetch || Boolean(onRetry);
 
-  return (
+  const loadingView = (
+    <div className="min-h-screen bg-[#0f0b1f] text-white flex items-center justify-center px-6 text-center">
+      <div className="max-w-md space-y-4">
+        <div className="flex justify-center">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-white" aria-hidden="true" />
+        </div>
+        <p className="text-lg font-semibold">{t('public.loading')}</p>
+        <p className="text-sm text-white/70">{t('public.loadingDescription')}</p>
+      </div>
+    </div>
+  );
+
+  const errorView = (
+    <div className="min-h-screen bg-[#0f0b1f] text-white flex items-center justify-center px-6 text-center">
+      <div className="max-w-md space-y-6">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold">{t('public.errorTitle')}</h1>
+          <p className="text-sm text-white/70">{errorMessage}</p>
+        </div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:justify-center">
+          {canRetry ? (
+            <Button variant="primary" className="sm:w-auto" onClick={handleInternalRetry}>
+              {t('public.retry')}
+            </Button>
+          ) : null}
+          {onBackToDashboard ? (
+            <Button variant="ghost" className="sm:w-auto" onClick={onBackToDashboard}>
+              {t('public.goBackToDashboard')}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+
+  const mainView = (
     <div className={rootClassName} style={{ backgroundColor: pageBackground, color: pageTextColor, fontFamily }}>
       <header
         className="sticky top-0 z-20 border-b backdrop-blur-sm"
@@ -1304,7 +1924,7 @@ export function PublicPortfolio({
                     href={item.href}
                     className="hover:opacity-80 transition-opacity"
                     style={{ color: navTextColor }}
-                    onClick={preventPreviewClick}
+                    onClick={handleNavLinkClick}
                   >
                     {item.label}
                   </a>
@@ -1454,95 +2074,23 @@ export function PublicPortfolio({
             )}
 
             <div className={heroButtonGroupClass}>
-              <a
-                href="#contact"
-                className="inline-flex items-center gap-2 rounded-lg px-6 py-3 font-medium shadow-lg transition-all hover:scale-105"
-                style={{ backgroundColor: accentColor, color: '#fff' }}
-              >
-                {t('public.cta.talk')}
-              </a>
-              <a
-                href="#projects"
-                className="inline-flex items-center gap-2 rounded-lg px-6 py-3 font-medium transition-colors"
-                style={heroSecondaryButtonStyle}
-              >
-                {t('public.cta.projects')}
-              </a>
               <button
                 type="button"
-                onClick={handleCvDownload}
-                className="inline-flex items-center gap-2 rounded-lg px-6 py-3 font-medium shadow-2xl transition-all hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+                onClick={previewMode ? undefined : handleCvDownload}
+                className="inline-flex items-center gap-2 rounded-lg px-6 py-3 font-medium shadow-2xl transition-all hover:scale-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-60 disabled:cursor-not-allowed"
                 style={{
                   backgroundColor: accentColor,
                   color: '#ffffff',
                   boxShadow: `0 20px 45px -12px ${accentColor}66`,
                 }}
-              >
-                <Download className="w-5 h-5 mr-2" />
-                {t('public.downloadCv')}
-              </button>
-            </div>
-
-            <div className={`${heroMetaAlignmentClass} mb-8`} style={{ color: heroMetaTextColor }}>
-              <span style={{ color: heroMetaLabelColor }}>{t('public.language')}</span>
-              {(['pt', 'en', 'es'] as const).map((lang) => (
-                <button
-                  key={lang}
-                  onClick={() => setLocale(lang)}
-                  className="px-3 py-1 rounded-full border transition-all"
-                  style={{
-                    backgroundColor: locale === lang
-                      ? heroLanguageActiveStyle.backgroundColor
-                      : heroLanguageInactiveStyle.backgroundColor,
-                    color: locale === lang
-                      ? heroLanguageActiveStyle.color
-                      : heroLanguageInactiveStyle.color,
-                    borderColor: locale === lang
-                      ? heroLanguageActiveStyle.borderColor
-                      : heroLanguageInactiveStyle.borderColor,
-                    opacity: locale === lang
-                      ? heroLanguageActiveStyle.opacity
-                      : heroLanguageInactiveStyle.opacity,
-                  }}
-                >
-                  {lang.toUpperCase()}
-                </button>
-              ))}
-            </div>
-
-            <div className={heroMetaAlignmentClass} style={{ color: heroMetaTextColor }}>
-              <span style={{ color: heroMetaLabelColor }}>{t('public.cvLanguage')}</span>
-              <select
-                value={cvLanguage}
-                onChange={(e) => setCvLanguage(e.target.value as CV['language'])}
-                className="rounded-lg border px-3 py-2 text-sm"
-                style={{
-                  backgroundColor: heroLanguageInactiveStyle.backgroundColor === 'transparent'
-                    ? 'transparent'
-                    : heroLanguageInactiveStyle.backgroundColor,
-                  color: heroLanguageInactiveStyle.color,
-                  borderColor: heroLanguageInactiveStyle.borderColor ?? 'rgba(255,255,255,0.2)',
-                }}
-              >
-                {availableCvLanguages.map((lang) => (
-                  <option key={lang} value={lang} className="text-[#1a1534]">
-                    {lang.toUpperCase()}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={previewMode ? undefined : handleCvDownload}
-                className="inline-flex items-center gap-2 rounded-lg px-4 py-2 font-medium shadow-lg transition-all hover:scale-105 disabled:opacity-60 disabled:cursor-not-allowed"
-                style={{ backgroundColor: accentColor, color: '#fff' }}
                 disabled={previewMode}
                 title={previewMode ? 'Disponível apenas no portfólio publicado' : undefined}
               >
-                <Download className="w-4 h-4" />
-                {t('public.downloadCvShort')}
+                <Download className="w-5 h-5" />
+                {t('public.downloadCv')}
               </button>
             </div>
-
-            <div className="flex flex-wrap gap-6 text-sm" style={{ color: heroMetaTextColor }}>
+            <div className="mt-6 flex flex-wrap gap-6 text-sm" style={{ color: heroMetaTextColor }}>
               {resolvedProfile.location && (
                 <div className="flex items-center gap-2">
                   <MapPin className="w-4 h-4" />
@@ -1609,43 +2157,13 @@ export function PublicPortfolio({
                         <span>{resolvedProfile.email}</span>
                       </a>
                     )}
-                    {resolvedProfile.phone && (
-                      <a
-                        href={`tel:${resolvedProfile.phone}`}
-                        className={heroCardContactItemClass}
-                        style={{ color: 'inherit' }}
-                        onClick={preventPreviewClick}
-                      >
-                        <Phone className="w-4 h-4" style={{ color: heroCardIconColor }} />
-                        <span>{resolvedProfile.phone}</span>
-                      </a>
-                    )}
-                    {resolvedProfile.location && (
-                      <div className={heroCardContactItemClass} style={{ color: 'inherit' }}>
-                        <MapPin className="w-4 h-4" style={{ color: heroCardIconColor }} />
-                        <span>{resolvedProfile.location}</span>
-                      </div>
-                    )}
                   </div>
 
-                  {hasSocialLinks && (
+                  {heroCardHasSocialLinks && (
                     <div className={heroCardSocialWrapperClass}>
-                      {resolvedProfile.socialLinks.website && (
+                      {heroCardSocialLinks.linkedin && (
                         <a
-                          href={resolvedProfile.socialLinks.website}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label="Website"
-                          className={heroCardSocialButtonClass}
-                          style={heroCardSocialButtonStyle}
-                          onClick={preventPreviewClick}
-                        >
-                          <Globe className="w-4 h-4" />
-                        </a>
-                      )}
-                      {resolvedProfile.socialLinks.linkedin && (
-                        <a
-                          href={resolvedProfile.socialLinks.linkedin}
+                          href={heroCardSocialLinks.linkedin}
                           target="_blank"
                           rel="noopener noreferrer"
                           aria-label="LinkedIn"
@@ -1656,22 +2174,9 @@ export function PublicPortfolio({
                           <Linkedin className="w-4 h-4" />
                         </a>
                       )}
-                      {resolvedProfile.socialLinks.github && (
+                      {heroCardSocialLinks.instagram && (
                         <a
-                          href={resolvedProfile.socialLinks.github}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label="GitHub"
-                          className={heroCardSocialButtonClass}
-                          style={heroCardSocialButtonStyle}
-                          onClick={preventPreviewClick}
-                        >
-                          <Github className="w-4 h-4" />
-                        </a>
-                      )}
-                      {resolvedProfile.socialLinks.instagram && (
-                        <a
-                          href={resolvedProfile.socialLinks.instagram}
+                          href={heroCardSocialLinks.instagram}
                           target="_blank"
                           rel="noopener noreferrer"
                           aria-label="Instagram"
@@ -1680,45 +2185,6 @@ export function PublicPortfolio({
                           onClick={preventPreviewClick}
                         >
                           <Instagram className="w-4 h-4" />
-                        </a>
-                      )}
-                      {resolvedProfile.socialLinks.youtube && (
-                        <a
-                          href={resolvedProfile.socialLinks.youtube}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label="YouTube"
-                          className={heroCardSocialButtonClass}
-                          style={heroCardSocialButtonStyle}
-                          onClick={preventPreviewClick}
-                        >
-                          <Youtube className="w-4 h-4" />
-                        </a>
-                      )}
-                      {resolvedProfile.socialLinks.spotify && (
-                        <a
-                          href={resolvedProfile.socialLinks.spotify}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label="Spotify"
-                          className={heroCardSocialButtonClass}
-                          style={heroCardSocialButtonStyle}
-                          onClick={preventPreviewClick}
-                        >
-                          <Music className="w-4 h-4" />
-                        </a>
-                      )}
-                      {resolvedProfile.socialLinks.soundcloud && (
-                        <a
-                          href={resolvedProfile.socialLinks.soundcloud}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label="SoundCloud"
-                          className={heroCardSocialButtonClass}
-                          style={heroCardSocialButtonStyle}
-                          onClick={preventPreviewClick}
-                        >
-                          <LinkIcon className="w-4 h-4" />
                         </a>
                       )}
                     </div>
@@ -2679,4 +3145,17 @@ export function PublicPortfolio({
       </div>
     </div>
   );
+
+  let renderContent: JSX.Element;
+
+  if (showLoadingState) {
+    renderContent = loadingView;
+  } else if (showErrorState) {
+    renderContent = errorView;
+  } else {
+    renderContent = mainView;
+  }
+
+  console.log('PUBLIC PORTFOLIO RENDER END');
+  return renderContent;
 }

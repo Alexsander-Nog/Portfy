@@ -1,5 +1,6 @@
 import { ReactNode, useState } from 'react';
 import { Logo } from './Logo';
+import { Button } from './Button';
 import { 
   LayoutDashboard, 
   FolderOpen, 
@@ -15,7 +16,7 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { useLocale } from '../i18n';
-import type { Subscription, UserProfile } from '../types';
+import type { Subscription, SubscriptionPlan, UserProfile } from '../types';
 
 interface DashboardLayoutProps {
   children: ReactNode;
@@ -24,6 +25,7 @@ interface DashboardLayoutProps {
   onLogout?: () => void;
   userProfile?: UserProfile;
   subscription?: Subscription;
+  onStartCheckout?: (plan: SubscriptionPlan) => void;
 }
 
 export function DashboardLayout({
@@ -33,6 +35,7 @@ export function DashboardLayout({
   onLogout,
   userProfile,
   subscription,
+  onStartCheckout,
 }: DashboardLayoutProps) {
   const { t } = useLocale();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -44,20 +47,44 @@ export function DashboardLayout({
       .map((chunk) => chunk[0]?.toUpperCase())
       .join('')
     : 'US';
-  const trialEndsAt = subscription?.trialEndsAt ? new Date(subscription.trialEndsAt) : null;
-  const today = new Date();
-  const trialDaysRemaining = trialEndsAt
-    ? Math.max(0, Math.ceil((trialEndsAt.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)))
-    : null;
-  const trialTotal = 15;
-  const trialProgress = trialDaysRemaining === null
+  const TRIAL_TOTAL_DAYS = 15;
+  const trialDaysRemaining = subscription?.trialDaysRemaining ?? null;
+  const trialExpired = subscription?.trialExpired ?? false;
+  const trialProgressBase = trialDaysRemaining === null
     ? 0
-    : Math.min(100, Math.max(0, ((trialTotal - trialDaysRemaining) / trialTotal) * 100));
-  const planLabel = subscription?.status === 'active'
-    ? 'Plano Ativo'
-    : subscription?.status === 'trialing'
-    ? 'Trial'
-    : 'Plano';
+    : Math.min(
+        100,
+        Math.max(0, ((TRIAL_TOTAL_DAYS - Math.min(trialDaysRemaining, TRIAL_TOTAL_DAYS)) / TRIAL_TOTAL_DAYS) * 100),
+      );
+  const trialProgress = trialExpired ? 100 : trialProgressBase;
+  const planLabel = subscription?.planType === 'trial'
+    ? t('subscription.badge.trial')
+    : t('subscription.badge.active');
+  const trialSidebarLabel = trialExpired
+    ? t('subscription.trialBanner.expiredChip')
+    : trialDaysRemaining !== null
+    ? t('subscription.trialBanner.chip', { count: trialDaysRemaining })
+    : t('subscription.trialBanner.missing');
+  const trialBannerClass = trialExpired
+    ? 'bg-[#fef2f2] border border-[#fecaca] text-[#7f1d1d]'
+    : trialDaysRemaining !== null && trialDaysRemaining <= 3
+    ? 'bg-[#fff7ed] border border-[#fed7aa] text-[#92400e]'
+    : 'bg-[#f5f3ff] border border-[#ddd6fe] text-[#312e81]';
+  const trialBannerPrimary = trialExpired
+    ? t('subscription.trialBanner.expired')
+    : t('subscription.trialBanner.active');
+  const trialBannerSecondary = trialExpired
+    ? t('subscription.trialBanner.expiredSecondary')
+    : trialDaysRemaining === null
+    ? t('subscription.trialBanner.generic')
+    : trialDaysRemaining === 1
+    ? t('subscription.trialBanner.oneDay')
+    : t('subscription.trialBanner.days', { count: trialDaysRemaining });
+  const trialButtonClass = trialExpired
+    ? '!bg-[#be123c] !hover:bg-[#9f1239] !text-white'
+    : trialDaysRemaining !== null && trialDaysRemaining <= 3
+    ? '!bg-[#f97316] !hover:bg-[#ea580c] !text-white'
+    : '!bg-[#4338ca] !hover:bg-[#3730a3] !text-white';
   const handleSectionChange = (section: string) => {
     onSectionChange?.(section);
     setSidebarOpen(false);
@@ -131,13 +158,29 @@ export function DashboardLayout({
             </div>
           </div>
           <div className="text-xs text-[#9b8da8]">
-            <div className="mb-1 flex justify-between">
-              <span>Trial</span>
-              <span>{trialDaysRemaining !== null ? `${trialDaysRemaining} dias restantes` : 'Sem dados'}</span>
+            <div className="mb-1 flex items-center justify-between gap-4">
+              <span>{t('subscription.badge.trial')}</span>
+              <span
+                className={
+                  trialExpired
+                    ? 'text-[#fca5a5] font-semibold'
+                    : trialDaysRemaining !== null && trialDaysRemaining <= 3
+                    ? 'text-[#facc15] font-semibold'
+                    : 'text-[#e8e3f0]'
+                }
+              >
+                {trialSidebarLabel}
+              </span>
             </div>
-            <div className="h-1.5 w-full rounded-full bg-[#2d2550]">
+            <div className="h-1.5 w-full rounded-full bg-white/10">
               <div
-                className="h-1.5 rounded-full bg-gradient-to-r from-[#a21d4c] to-[#c92563]"
+                className={`h-1.5 rounded-full transition-all duration-300 ${
+                  trialExpired
+                    ? 'bg-[#f87171]'
+                    : trialDaysRemaining !== null && trialDaysRemaining <= 3
+                    ? 'bg-[#f97316]'
+                    : 'bg-[#c4b5fd]'
+                }`}
                 style={{ width: `${trialProgress}%` }}
               ></div>
             </div>
@@ -204,6 +247,28 @@ export function DashboardLayout({
             </button>
           ) : null}
         </header>
+
+        {subscription?.planType === 'trial' ? (
+          <div className="border-b border-[#e8e3f0] bg-white px-4 py-4 shadow-sm lg:px-8">
+            <div className={`flex flex-col gap-4 rounded-2xl px-5 py-4 md:flex-row md:items-center md:justify-between ${trialBannerClass}`}>
+              <div className="space-y-1 text-left">
+                <p className="text-xs font-semibold uppercase tracking-[0.2em]">
+                  {t('subscription.trialBanner.headline')}
+                </p>
+                <p className="text-lg font-semibold leading-tight">{trialBannerPrimary}</p>
+                <p className="text-sm opacity-80">{trialBannerSecondary}</p>
+              </div>
+              <Button
+                variant="primary"
+                size="sm"
+                className={`w-full md:w-auto shadow-md shadow-black/10 ${trialButtonClass}`}
+                onClick={() => onStartCheckout?.('pro')}
+              >
+                {t('subscription.trialBanner.cta')}
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         <main className="flex-1 overflow-y-auto min-h-0">
           {children}

@@ -11,6 +11,9 @@ import type {
   ScientificArticleTranslations,
   Subscription,
   SubscriptionPlan,
+  SubscriptionPlanType,
+  PortfolioTemplateId,
+  CvTemplateId,
   UserProfile,
   UserTheme,
 } from "../types";
@@ -26,9 +29,7 @@ const TABLES = {
   articles: "articles",
 } as const;
 
-const PRELAUNCH_PLAN_TIER: SubscriptionPlan = "pro";
-const PRELAUNCH_STATUS: Subscription["status"] = "trialing";
-const PRELAUNCH_GRACE_DAYS = 3;
+const TRIAL_DURATION_DAYS = 15;
 
 const isMissingOptionalColumn = (error?: PostgrestError | null) => {
   if (!error) {
@@ -64,6 +65,158 @@ const isMissingTable = (error?: PostgrestError | null) => {
     message.includes("undefined table") ||
     (message.includes("relation") && message.includes("does not exist"))
   );
+};
+
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+const normalizePortfolioTemplateId = (value?: string | null): PortfolioTemplateId => {
+  switch ((value ?? "").toLowerCase()) {
+    case "minimal":
+    case "minimal-elegant":
+      return "minimal";
+    case "dark":
+    case "dark-professional":
+      return "dark";
+    case "gradient":
+    case "creative-gradient":
+      return "gradient";
+    case "modern":
+    case "dev-modern":
+    default:
+      return "modern";
+  }
+};
+
+const normalizeCvTemplateId = (value?: string | null): CvTemplateId => {
+  const normalized = (value ?? "").toLowerCase();
+  const compact = normalized.replace(/[^a-z0-9]/g, "");
+
+  switch (compact) {
+    case "modernclassic":
+    case "modernplus":
+    case "moderno":
+      return "modernClassic";
+    case "minimalelegant":
+    case "minimalista":
+    case "minimalcolumns":
+      return "minimalElegant";
+    case "corporate":
+    case "corporativo":
+      return "corporate";
+    case "creativeaccent":
+    case "criativo":
+    case "creativepulse":
+      return "creativeAccent";
+    case "minimal":
+    case "minimalrecruiter":
+      return "minimal";
+    case "creative":
+    case "creativedesigner":
+      return "creative";
+    case "executive":
+    case "executivepro":
+      return "executive";
+    case "modernclean":
+    case "modern":
+    default:
+      return "modern";
+  }
+};
+
+const SUBSCRIPTION_SELECT_COLUMNS = [
+  "id",
+  "user_id",
+  "status",
+  "plan_type",
+  "plan_tier",
+  "subscription_active",
+  "trial_start",
+  "trial_end",
+  "trial_ends_at",
+  "current_period_end",
+  "grace_days",
+  "updated_at",
+].join(", ");
+
+type SubscriptionRow = {
+  id: string;
+  user_id: string;
+  status: string;
+  plan_type?: string | null;
+  plan_tier?: string | null;
+  subscription_active?: boolean | null;
+  trial_start?: string | null;
+  trial_end?: string | null;
+  trial_ends_at?: string | null;
+  current_period_end?: string | null;
+  grace_days?: number | null;
+  updated_at: string;
+};
+
+const normalizeSubscriptionRow = (row: SubscriptionRow): SubscriptionRow => {
+  const now = new Date();
+  const startSource = row.trial_start ? new Date(row.trial_start) : now;
+  const validStart = Number.isNaN(startSource.getTime()) ? now : startSource;
+  const endSource = row.trial_end ?? row.trial_ends_at;
+  const derivedEnd = endSource ? new Date(endSource) : new Date(validStart.getTime() + TRIAL_DURATION_DAYS * DAY_IN_MS);
+  const validEnd = Number.isNaN(derivedEnd.getTime())
+    ? new Date(validStart.getTime() + TRIAL_DURATION_DAYS * DAY_IN_MS)
+    : derivedEnd;
+
+  return {
+    ...row,
+    plan_type: row.plan_type ?? "trial",
+    plan_tier: row.plan_tier ?? "pro",
+    subscription_active: row.subscription_active ?? true,
+    trial_start: validStart.toISOString(),
+    trial_end: validEnd.toISOString(),
+    trial_ends_at: row.trial_ends_at ?? validEnd.toISOString(),
+  };
+};
+
+const mapSubscriptionRow = (row: SubscriptionRow): Subscription => {
+  const planType = (row.plan_type ?? "trial") as SubscriptionPlanType;
+  const planTier = (row.plan_tier as SubscriptionPlan | null) ?? "pro";
+  const subscriptionActive = row.subscription_active ?? true;
+  const trialStart = row.trial_start ?? undefined;
+  const trialEndsAt = row.trial_end ?? row.trial_ends_at ?? undefined;
+
+  let trialDaysRemaining: number | undefined;
+  let trialExpired = false;
+
+  if (trialEndsAt) {
+    const endDate = new Date(trialEndsAt);
+    const endTime = endDate.getTime();
+    if (!Number.isNaN(endTime)) {
+      const diffMs = endTime - Date.now();
+      if (diffMs <= 0) {
+        trialDaysRemaining = 0;
+        trialExpired = true;
+      } else {
+        trialDaysRemaining = Math.max(0, Math.ceil(diffMs / DAY_IN_MS));
+      }
+    }
+  }
+
+  if (planType === "trial" && (!subscriptionActive || trialExpired)) {
+    trialExpired = true;
+  }
+
+  return {
+    id: row.id,
+    userId: row.user_id,
+    status: row.status as Subscription["status"],
+    planType,
+    planTier,
+    subscriptionActive,
+    trialStart,
+    trialEndsAt,
+    currentPeriodEnd: row.current_period_end ?? undefined,
+    graceDays: row.grace_days ?? undefined,
+    trialDaysRemaining,
+    trialExpired,
+    updatedAt: row.updated_at,
+  };
 };
 
 type ProjectRow = {
@@ -212,13 +365,96 @@ function ensureValidJsonb(obj: any): any {
     return {};
   }
   try {
-    // This will strip out any problematic values and ensure it's valid JSON
     return JSON.parse(JSON.stringify(obj));
   } catch (e) {
     console.error('Invalid JSONB object:', e);
     return {};
   }
 }
+
+const isValidHttpUrl = (value: string): boolean => {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch (error) {
+    return false;
+  }
+};
+
+const sanitizeMediaUrl = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  return isValidHttpUrl(trimmed) ? trimmed : null;
+};
+
+const sanitizeOptionalString = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const sanitizeStringArray = (raw: unknown, maxItems = 50): string[] => {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const sanitized: string[] = [];
+
+  for (const entry of raw) {
+    if (typeof entry !== "string") {
+      continue;
+    }
+
+    const trimmed = entry.trim();
+    if (!trimmed) {
+      continue;
+    }
+
+    const dedupeKey = trimmed.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+
+    seen.add(dedupeKey);
+    sanitized.push(trimmed);
+
+    if (sanitized.length >= maxItems) {
+      break;
+    }
+  }
+
+  return sanitized;
+};
+
+const sanitizeSocialLinks = (links: UserProfile["socialLinks"] | undefined): Record<string, string> | null => {
+  if (!links) {
+    return null;
+  }
+
+  const sanitized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(links)) {
+    if (typeof value !== "string") {
+      continue;
+    }
+
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      continue;
+    }
+
+    sanitized[key] = trimmed;
+  }
+
+  return Object.keys(sanitized).length > 0 ? sanitized : null;
+};
 
 function sanitizeArticleTranslations(
   translations?: ScientificArticleTranslations | null,
@@ -346,6 +582,58 @@ const normalizeEducationEntries = (raw: any): EducationItem[] => {
     .filter((entry): entry is EducationItem => entry !== null);
 };
 
+const mapProfileRow = (row: Record<string, any>): UserProfile => {
+  const rawSocialLinks = row.social_links && typeof row.social_links === 'object'
+    ? (row.social_links as UserProfile['socialLinks'])
+    : undefined;
+  const socialLinks = sanitizeSocialLinks(rawSocialLinks) ?? undefined;
+  const education = normalizeEducationEntries(row.education);
+  const translations = row.translations && typeof row.translations === 'object'
+    ? row.translations
+    : undefined;
+  const trialStart = typeof row.trial_start === 'string' ? row.trial_start : undefined;
+  const trialEnd = typeof row.trial_end === 'string' ? row.trial_end : undefined;
+  const showCvPhoto = typeof row.show_cv_photo === 'boolean' ? row.show_cv_photo : undefined;
+  const skills = sanitizeStringArray(row.skills);
+
+  let trialDaysRemaining: number | undefined;
+  if (trialEnd) {
+    const endDate = new Date(trialEnd);
+    const endTime = endDate.getTime();
+    if (!Number.isNaN(endTime)) {
+      const diffMs = endTime - Date.now();
+      if (diffMs <= 0) {
+        trialDaysRemaining = 0;
+      } else {
+        trialDaysRemaining = Math.max(0, Math.ceil(diffMs / DAY_IN_MS));
+      }
+    }
+  }
+
+  return {
+    id: row.id,
+    fullName: row.full_name,
+    slug: row.slug ?? undefined,
+    title: row.title ?? undefined,
+    bio: row.bio ?? undefined,
+    location: row.location ?? undefined,
+    email: row.email ?? undefined,
+    phone: row.phone ?? undefined,
+    photoUrl: row.photo_url ?? undefined,
+    socialLinks,
+    skills,
+    education,
+    translations,
+    preferredLocale: (row.preferred_locale as Locale | null) ?? undefined,
+    portfolioTemplate: normalizePortfolioTemplateId(row.theme_template as string | null),
+    cvTemplate: normalizeCvTemplateId(row.cv_template as string | null),
+    showCvPhoto,
+    trialStart,
+    trialEnd,
+    trialDaysRemaining,
+  };
+};
+
 export async function fetchUserProfile(userId: string): Promise<UserProfile | null> {
   console.log('=== fetchUserProfile INICIADO ===');
   console.log('userId:', userId);
@@ -376,167 +664,185 @@ export async function fetchUserProfile(userId: string): Promise<UserProfile | nu
   }
 
   console.log('Perfil carregado com sucesso do Supabase:', data);
-  const row = data as Record<string, any>;
-  const socialLinks = row.social_links && typeof row.social_links === 'object'
-    ? row.social_links
-    : undefined;
-  const education = normalizeEducationEntries(row.education);
-  const translations = row.translations && typeof row.translations === 'object'
-    ? row.translations
-    : undefined;
-  const result = {
-    id: row.id,
-    fullName: row.full_name,
-    title: row.title ?? undefined,
-    bio: row.bio ?? undefined,
-    location: row.location ?? undefined,
-    email: row.email ?? undefined,
-    phone: row.phone ?? undefined,
-    photoUrl: row.photo_url ?? undefined,
-    socialLinks,
-    skills: Array.isArray(row.skills) ? row.skills : [],
-    education,
-    translations,
-    preferredLocale: (row.preferred_locale as Locale | null) ?? undefined,
-  };
+  const result = mapProfileRow(data as Record<string, any>);
   console.log('Resultado processado do fetchUserProfile:', result);
-  console.log('=== fetchUserProfile CONCLUÍDO ===');
   return result;
 }
 
-export async function upsertUserProfile(userId: string, profile: Omit<UserProfile, "id">): Promise<UserProfile | null> {
+export async function fetchUserProfileBySlug(slug: string): Promise<UserProfile | null> {
   if (!isSupabaseConfigured) {
-    console.warn('Supabase não configurado em upsertUserProfile');
+    console.warn('Supabase não configurado no fetchUserProfileBySlug');
     return null;
   }
 
-  // Clean translations object to remove undefined fields
-  let cleanTranslations = null;
-  if (profile.translations) {
-    const cleaned: any = {};
-    if (profile.translations.en) {
-      const cleanedEn = removeUndefinedFields(profile.translations.en);
-      if (Object.keys(cleanedEn).length > 0) {
-        cleaned.en = cleanedEn;
+  const { data, error } = await supabase
+    .from(TABLES.profiles)
+    .select("*")
+    .eq("slug", slug)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Erro no fetchUserProfileBySlug:', error);
+    return null;
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  return mapProfileRow(data as Record<string, any>);
+}
+
+export async function upsertUserProfile(userId: string, profile: UserProfile): Promise<UserProfile | null> {
+  if (!isSupabaseConfigured) {
+    console.warn('Supabase não configurado no upsertUserProfile');
+    return null;
+  }
+
+  let cleanTranslations: Record<string, any> | null = null;
+  if (profile.translations && typeof profile.translations === 'object') {
+    const cleaned: Record<string, any> = {};
+    for (const [localeKey, value] of Object.entries(profile.translations)) {
+      if (!value || typeof value !== 'object') {
+        continue;
+      }
+
+      const trimmed: Record<string, string> = {};
+      for (const [fieldKey, fieldValue] of Object.entries(value)) {
+        if (typeof fieldValue === 'string') {
+          const normalized = fieldValue.trim();
+          if (normalized.length > 0) {
+            trimmed[fieldKey] = normalized;
+          }
+        }
+      }
+
+      if (Object.keys(trimmed).length > 0) {
+        cleaned[localeKey] = trimmed;
       }
     }
-    if (profile.translations.es) {
-      const cleanedEs = removeUndefinedFields(profile.translations.es);
-      if (Object.keys(cleanedEs).length > 0) {
-        cleaned.es = cleanedEs;
-      }
-    }
+
     if (Object.keys(cleaned).length > 0) {
       cleanTranslations = cleaned;
     }
   }
 
-  const socialLinksJson = profile.socialLinks ? ensureValidJsonb(profile.socialLinks) : null;
+  const sanitizedTitle = sanitizeOptionalString(profile.title);
+  const sanitizedBio = sanitizeOptionalString(profile.bio);
+  const sanitizedLocation = sanitizeOptionalString(profile.location);
+  const sanitizedEmail = sanitizeOptionalString(profile.email);
+  const sanitizedPhone = sanitizeOptionalString(profile.phone);
+  const sanitizedSkills = sanitizeStringArray(profile.skills);
+  const sanitizedSocialLinks = sanitizeSocialLinks(profile.socialLinks);
   const normalizedEducation = normalizeEducationEntries(profile.education ?? []);
-  const educationJson = JSON.parse(JSON.stringify(normalizedEducation));
+  const educationJson = normalizedEducation.length > 0 ? ensureValidJsonb(normalizedEducation) : null;
   const translationsJson = cleanTranslations ? ensureValidJsonb(cleanTranslations) : null;
+  const normalizedFullName = (profile.fullName ?? '').trim();
+  const fallbackFullName = normalizedFullName.length > 0 ? normalizedFullName : 'Portfolio User';
+  const photoUrl = sanitizeMediaUrl(profile.photoUrl) ?? null;
+  const socialLinksJson = sanitizedSocialLinks ? ensureValidJsonb(sanitizedSocialLinks) : null;
 
   const payload: Record<string, any> = {
     id: userId,
-    full_name: profile.fullName,
-    title: profile.title ?? null,
-    bio: profile.bio ?? null,
-    location: profile.location ?? null,
-    email: profile.email ?? null,
-    phone: profile.phone ?? null,
-    photo_url: profile.photoUrl ?? null,
+    full_name: fallbackFullName,
+    title: sanitizedTitle,
+    bio: sanitizedBio,
+    location: sanitizedLocation,
+    email: sanitizedEmail,
+    phone: sanitizedPhone,
+    photo_url: photoUrl,
     social_links: socialLinksJson,
-    skills: profile.skills ?? [],
+    skills: sanitizedSkills,
     education: educationJson,
     translations: translationsJson,
+    theme_template: normalizePortfolioTemplateId(profile.portfolioTemplate),
+    cv_template: normalizeCvTemplateId(profile.cvTemplate),
   };
+
+  if (typeof profile.showCvPhoto === 'boolean') {
+    payload.show_cv_photo = profile.showCvPhoto;
+  }
 
   if (profile.preferredLocale) {
     payload.preferred_locale = profile.preferredLocale;
   }
 
-  console.log('Payload para Supabase (profiles):', payload);
-  console.log('📸 photo_url being saved:', payload.photo_url);
+  if (profile.trialStart) {
+    payload.trial_start = profile.trialStart;
+  }
 
-  const { data, error } = await supabase
+  if (profile.trialEnd) {
+    payload.trial_end = profile.trialEnd;
+  }
+
+  if (typeof profile.slug === 'string') {
+    const trimmedSlug = profile.slug.trim();
+    if (trimmedSlug) {
+      payload.slug = trimmedSlug;
+    }
+  }
+
+  if (!payload.education) {
+    payload.education = null;
+  }
+
+  if (!payload.translations) {
+    payload.translations = null;
+  }
+
+  if (!payload.social_links) {
+    payload.social_links = null;
+  }
+
+  if (!Array.isArray(payload.skills)) {
+    payload.skills = [];
+  }
+
+  const upsertResult = await supabase
     .from(TABLES.profiles)
-    .upsert(payload)
-    .select("id, full_name, title, bio, location, email, phone, photo_url, social_links, skills, education, translations, preferred_locale")
+    .upsert(removeUndefinedFields(payload), { onConflict: 'id' })
+    .select("id, full_name, title, bio, location, email, phone, photo_url, social_links, skills, education, translations, preferred_locale, theme_template, cv_template, show_cv_photo, trial_start, trial_end")
     .single();
 
-  if (error) {
-    console.error('Erro ao upsert profile (primeira tentativa):', error);
-    const updateAttempt = await supabase
+  if (isMissingOptionalColumn(upsertResult.error)) {
+    console.warn('Coluna opcional ausente em upsertUserProfile. Aplicando payload de fallback.', upsertResult.error);
+
+    const fallbackPayload = removeUndefinedFields({
+      id: userId,
+      full_name: fallbackFullName,
+      title: sanitizedTitle,
+      bio: sanitizedBio,
+      location: sanitizedLocation,
+      email: sanitizedEmail,
+      phone: sanitizedPhone,
+      photo_url: photoUrl,
+    });
+
+    const fallbackResult = await supabase
       .from(TABLES.profiles)
-      .update(payload)
-      .eq("id", userId)
-      .select("id, full_name, title, bio, location, email, phone, photo_url, social_links, skills, education, translations, preferred_locale")
+      .upsert(fallbackPayload, { onConflict: 'id' })
+      .select('id, full_name, title, bio, location, email, phone, photo_url')
       .maybeSingle();
 
-    if (!updateAttempt.error && updateAttempt.data) {
-      const row = updateAttempt.data;
-      return {
-        id: row.id,
-        fullName: row.full_name,
-        title: row.title ?? undefined,
-        bio: row.bio ?? undefined,
-        location: row.location ?? undefined,
-        email: row.email ?? undefined,
-        phone: row.phone ?? undefined,
-        photoUrl: row.photo_url ?? undefined,
-        socialLinks: row.social_links ?? undefined,
-        skills: row.skills ?? [],
-        education: row.education ?? undefined,
-        translations: row.translations ?? undefined,
-        preferredLocale: (row.preferred_locale as Locale | null) ?? undefined,
-      };
+    if (fallbackResult.error) {
+      console.error('Erro ao executar fallback no upsertUserProfile:', fallbackResult.error);
+      return null;
     }
 
-    if (isMissingOptionalColumn(error)) {
-      console.warn('upsertUserProfile: coluna opcional ausente, aplicando payload básico. Erro original:', error);
-      const legacyPayload: Record<string, any> = {
-        id: userId,
-        full_name: profile.fullName,
-        title: profile.title ?? null,
-        bio: profile.bio ?? null,
-        location: profile.location ?? null,
-        email: profile.email ?? null,
-        phone: profile.phone ?? null,
-        photo_url: profile.photoUrl ?? null,
-        social_links: socialLinksJson,
-      };
-
-      const fallback = await supabase
-        .from(TABLES.profiles)
-        .upsert(legacyPayload)
-        .select("id, full_name, title, bio, location, email, phone, photo_url, social_links")
-        .single();
-
-      if (fallback.error || !fallback.data) {
-        console.error('Erro no fallback de upsertUserProfile:', fallback.error);
-        return null;
-      }
-
-      console.log('Perfil salvo com fallback básico:', fallback.data);
-      return {
-        id: fallback.data.id,
-        fullName: fallback.data.full_name,
-        title: fallback.data.title ?? undefined,
-        bio: fallback.data.bio ?? undefined,
-        location: fallback.data.location ?? undefined,
-        email: fallback.data.email ?? undefined,
-        phone: fallback.data.phone ?? undefined,
-        photoUrl: fallback.data.photo_url ?? undefined,
-        socialLinks: fallback.data.social_links ?? undefined,
-        skills: [],
-        education: [],
-        translations: undefined,
-        preferredLocale: profile.preferredLocale ?? undefined,
-      };
+    if (!fallbackResult.data) {
+      console.error('Nenhum dado retornado após fallback no upsertUserProfile');
+      return null;
     }
 
+    return mapProfileRow(fallbackResult.data as Record<string, any>);
+  }
+
+  if (upsertResult.error) {
+    console.error('Erro ao upsert profile:', upsertResult.error);
     return null;
   }
+
+  const data = upsertResult.data;
 
   if (!data) {
     console.error('Nenhum dado retornado após upsert no upsertUserProfile');
@@ -544,21 +850,7 @@ export async function upsertUserProfile(userId: string, profile: Omit<UserProfil
   }
 
   console.log('Perfil salvo com sucesso no upsertUserProfile:', data);
-  return {
-    id: data.id,
-    fullName: data.full_name,
-    title: data.title ?? undefined,
-    bio: data.bio ?? undefined,
-    location: data.location ?? undefined,
-    email: data.email ?? undefined,
-    phone: data.phone ?? undefined,
-    photoUrl: data.photo_url ?? undefined,
-    socialLinks: data.social_links ?? undefined,
-    skills: data.skills ?? [],
-    education: data.education ?? undefined,
-    translations: data.translations ?? undefined,
-    preferredLocale: (data.preferred_locale as Locale | null) ?? undefined,
-  };
+  return mapProfileRow(data as Record<string, any>);
 }
 
 export async function updatePreferredLocale(
@@ -808,7 +1100,7 @@ export async function fetchCvs(userId: string): Promise<CV[]> {
 
   let { data, error } = await supabase
     .from(TABLES.cvs)
-    .select("id, name, language, selected_projects, selected_experiences, selected_articles, created_at, updated_at")
+    .select("id, name, language, selected_projects, selected_experiences, selected_articles, show_cv_photo, created_at, updated_at")
     .eq("user_id", userId)
     .order("updated_at", { ascending: false });
 
@@ -834,6 +1126,7 @@ export async function fetchCvs(userId: string): Promise<CV[]> {
     selected_projects: string[] | null;
     selected_experiences: string[] | null;
     selected_articles?: string[] | null;
+    show_cv_photo?: boolean | null;
     created_at: string;
     updated_at: string;
   }>;
@@ -845,6 +1138,7 @@ export async function fetchCvs(userId: string): Promise<CV[]> {
     selectedProjects: cv.selected_projects ?? [],
     selectedExperiences: cv.selected_experiences ?? [],
     selectedArticles: cv.selected_articles ?? [],
+    showCvPhoto: typeof cv.show_cv_photo === 'boolean' ? cv.show_cv_photo : undefined,
     createdAt: cv.created_at,
     updatedAt: cv.updated_at,
   }));
@@ -859,7 +1153,7 @@ export async function fetchSubscription(userId: string): Promise<Subscription | 
 
   let { data, error } = await supabase
     .from(TABLES.subscriptions)
-    .select("id, user_id, status, plan_tier, trial_ends_at, current_period_end, grace_days, updated_at")
+    .select(SUBSCRIPTION_SELECT_COLUMNS)
     .eq("user_id", userId)
     .maybeSingle();
 
@@ -867,7 +1161,7 @@ export async function fetchSubscription(userId: string): Promise<Subscription | 
     missingOptionalColumns = true;
     const fallback = await supabase
       .from(TABLES.subscriptions)
-      .select("id, user_id, status, trial_ends_at, current_period_end, updated_at")
+      .select("id, user_id, status, plan_tier, trial_ends_at, current_period_end, grace_days, updated_at")
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -879,124 +1173,111 @@ export async function fetchSubscription(userId: string): Promise<Subscription | 
     return null;
   }
 
+  const originalRow = data as SubscriptionRow;
+  const normalizedRow = normalizeSubscriptionRow(originalRow);
+
+  const updates: Record<string, unknown> = {};
   if (!missingOptionalColumns) {
-    const needsUpdate =
-      data.plan_tier !== PRELAUNCH_PLAN_TIER ||
-      data.status !== PRELAUNCH_STATUS ||
-      data.trial_ends_at !== null ||
-      data.grace_days !== PRELAUNCH_GRACE_DAYS;
-
-    if (needsUpdate) {
-      const { data: updated, error: updateError } = await supabase
-        .from(TABLES.subscriptions)
-        .update({
-          plan_tier: PRELAUNCH_PLAN_TIER,
-          status: PRELAUNCH_STATUS,
-          trial_ends_at: null,
-          grace_days: PRELAUNCH_GRACE_DAYS,
-        })
-        .eq("id", data.id)
-        .select("id, user_id, status, plan_tier, trial_ends_at, current_period_end, grace_days, updated_at")
-        .single();
-
-      if (!updateError && updated) {
-        data.plan_tier = updated.plan_tier;
-        data.status = updated.status;
-        data.trial_ends_at = updated.trial_ends_at;
-        data.current_period_end = updated.current_period_end;
-        data.grace_days = updated.grace_days;
-        data.updated_at = updated.updated_at;
-      }
+    if (originalRow.plan_type !== normalizedRow.plan_type) {
+      updates.plan_type = normalizedRow.plan_type;
+    }
+    if (originalRow.plan_tier !== normalizedRow.plan_tier) {
+      updates.plan_tier = normalizedRow.plan_tier;
+    }
+    if (originalRow.subscription_active !== normalizedRow.subscription_active) {
+      updates.subscription_active = normalizedRow.subscription_active;
+    }
+    if (originalRow.trial_start !== normalizedRow.trial_start) {
+      updates.trial_start = normalizedRow.trial_start;
+    }
+    const originalTrialEnd = originalRow.trial_end ?? originalRow.trial_ends_at;
+    if (originalTrialEnd !== normalizedRow.trial_end) {
+      updates.trial_end = normalizedRow.trial_end;
+      updates.trial_ends_at = normalizedRow.trial_end;
     }
   }
 
-  type SubscriptionRow = {
-    id: string;
-    user_id: string;
-    status: string;
-    plan_tier?: string | null;
-    trial_ends_at?: string | null;
-    current_period_end?: string | null;
-    grace_days?: number | null;
-    updated_at: string;
-  };
+  let subscription = mapSubscriptionRow(normalizedRow);
 
-  const row = data as SubscriptionRow;
+  if (subscription.planType === "trial" && subscription.trialExpired) {
+    if (subscription.subscriptionActive) {
+      updates.subscription_active = false;
+      subscription = { ...subscription, subscriptionActive: false };
+    }
+    if (subscription.status !== "blocked") {
+      updates.status = "blocked";
+      subscription = { ...subscription, status: "blocked" };
+    }
+    subscription = { ...subscription, trialDaysRemaining: 0, trialExpired: true };
+  }
 
-  return {
-    id: row.id,
-    userId: row.user_id,
-    status: row.status as Subscription["status"],
-    planTier: (row.plan_tier as SubscriptionPlan | null) ?? PRELAUNCH_PLAN_TIER,
-    trialEndsAt: row.trial_ends_at ?? undefined,
-    currentPeriodEnd: row.current_period_end ?? undefined,
-    graceDays: row.grace_days ?? (missingOptionalColumns ? PRELAUNCH_GRACE_DAYS : undefined),
-    updatedAt: row.updated_at,
-  };
+  if (!missingOptionalColumns && Object.keys(updates).length > 0) {
+    await supabase
+      .from(TABLES.subscriptions)
+      .update(updates)
+      .eq("id", normalizedRow.id);
+  }
+
+  return subscription;
 }
 
-export async function ensureSubscription(userId: string, _trialDays = 15): Promise<Subscription | null> {
+export async function ensureSubscription(userId: string, trialDays = TRIAL_DURATION_DAYS): Promise<Subscription | null> {
   if (!isSupabaseConfigured) {
     return null;
   }
 
-  let missingOptionalColumns = false;
-
-  let { data, error } = await supabase
+  const existing = await supabase
     .from(TABLES.subscriptions)
-    .upsert({
-      user_id: userId,
-      status: PRELAUNCH_STATUS,
-      plan_tier: PRELAUNCH_PLAN_TIER,
-      trial_ends_at: null,
-      grace_days: PRELAUNCH_GRACE_DAYS,
-    }, { onConflict: "user_id" })
-    .select("id, user_id, status, plan_tier, trial_ends_at, current_period_end, grace_days, updated_at")
-    .single();
+    .select("id")
+    .eq("user_id", userId)
+    .maybeSingle();
 
-  if (isMissingOptionalColumn(error)) {
-    missingOptionalColumns = true;
-    const fallback = await supabase
-      .from(TABLES.subscriptions)
-      .upsert({
-        user_id: userId,
-        status: PRELAUNCH_STATUS,
-        trial_ends_at: null,
-      }, { onConflict: "user_id" })
-      .select("id, user_id, status, trial_ends_at, current_period_end, updated_at")
-      .single();
-
-    data = fallback.data as typeof data;
-    error = fallback.error;
-  }
-
-  if (error || !data) {
+  if (existing.error && !isMissingOptionalColumn(existing.error) && existing.error.code !== "PGRST116") {
     return null;
   }
 
-  type SubscriptionRow = {
-    id: string;
-    user_id: string;
-    status: string;
-    plan_tier?: string | null;
-    trial_ends_at?: string | null;
-    current_period_end?: string | null;
-    grace_days?: number | null;
-    updated_at: string;
-  };
+  if (!existing.data) {
+    const now = new Date();
+    const startIso = now.toISOString();
+    const endIso = new Date(now.getTime() + trialDays * DAY_IN_MS).toISOString();
 
-  const row = data as SubscriptionRow;
+    let insertResult = await supabase
+      .from(TABLES.subscriptions)
+      .insert({
+        user_id: userId,
+        status: "trialing",
+        plan_type: "trial",
+        plan_tier: "pro",
+        subscription_active: true,
+        trial_start: startIso,
+        trial_end: endIso,
+        trial_ends_at: endIso,
+      })
+      .select(SUBSCRIPTION_SELECT_COLUMNS)
+      .single();
 
-  return {
-    id: row.id,
-    userId: row.user_id,
-    status: row.status as Subscription["status"],
-    planTier: (row.plan_tier as SubscriptionPlan | null) ?? PRELAUNCH_PLAN_TIER,
-    trialEndsAt: row.trial_ends_at ?? undefined,
-    currentPeriodEnd: row.current_period_end ?? undefined,
-    graceDays: row.grace_days ?? (missingOptionalColumns ? PRELAUNCH_GRACE_DAYS : undefined),
-    updatedAt: row.updated_at,
-  };
+    if (isMissingOptionalColumn(insertResult.error)) {
+      insertResult = await supabase
+        .from(TABLES.subscriptions)
+        .insert({
+          user_id: userId,
+          status: "trialing",
+          plan_tier: "pro",
+          trial_ends_at: endIso,
+        })
+        .select("id, user_id, status, plan_tier, trial_ends_at, current_period_end, grace_days, updated_at")
+        .single();
+    }
+
+    if (insertResult.error || !insertResult.data) {
+      return null;
+    }
+
+    const normalized = normalizeSubscriptionRow(insertResult.data as SubscriptionRow);
+    return mapSubscriptionRow(normalized);
+  }
+
+  return fetchSubscription(userId);
 }
 
 export async function createCv(userId: string, cv: Omit<CV, "id" | "createdAt" | "updatedAt">): Promise<CV | null> {
@@ -1004,29 +1285,33 @@ export async function createCv(userId: string, cv: Omit<CV, "id" | "createdAt" |
     return null;
   }
 
+  const insertPayload: Record<string, any> = {
+    user_id: userId,
+    name: cv.name,
+    language: cv.language,
+    selected_projects: cv.selectedProjects ?? [],
+    selected_experiences: cv.selectedExperiences ?? [],
+    selected_articles: cv.selectedArticles ?? [],
+  };
+
+  if (typeof cv.showCvPhoto === 'boolean') {
+    insertPayload.show_cv_photo = cv.showCvPhoto;
+  }
+
   let { data, error } = await supabase
     .from(TABLES.cvs)
-    .insert({
-      user_id: userId,
-      name: cv.name,
-      language: cv.language,
-      selected_projects: cv.selectedProjects ?? [],
-      selected_experiences: cv.selectedExperiences ?? [],
-      selected_articles: cv.selectedArticles ?? [],
-    })
-    .select("id, name, language, selected_projects, selected_experiences, selected_articles, created_at, updated_at")
+    .insert(insertPayload)
+    .select("id, name, language, selected_projects, selected_experiences, selected_articles, show_cv_photo, created_at, updated_at")
     .single();
 
   if (isMissingOptionalColumn(error)) {
+    const fallbackPayload = { ...insertPayload };
+    delete fallbackPayload.selected_articles;
+    delete fallbackPayload.show_cv_photo;
+
     const fallback = await supabase
       .from(TABLES.cvs)
-      .insert({
-        user_id: userId,
-        name: cv.name,
-        language: cv.language,
-        selected_projects: cv.selectedProjects ?? [],
-        selected_experiences: cv.selectedExperiences ?? [],
-      })
+      .insert(fallbackPayload)
       .select("id, name, language, selected_projects, selected_experiences, created_at, updated_at")
       .single();
 
@@ -1041,6 +1326,9 @@ export async function createCv(userId: string, cv: Omit<CV, "id" | "createdAt" |
   const resolvedSelectedArticles = Array.isArray((data as any).selected_articles)
     ? ((data as any).selected_articles as string[])
     : cv.selectedArticles ?? [];
+  const resolvedShowCvPhoto = typeof (data as any).show_cv_photo === 'boolean'
+    ? (data as any).show_cv_photo
+    : cv.showCvPhoto;
 
   return {
     id: data.id,
@@ -1049,6 +1337,7 @@ export async function createCv(userId: string, cv: Omit<CV, "id" | "createdAt" |
     selectedProjects: data.selected_projects ?? [],
     selectedExperiences: data.selected_experiences ?? [],
     selectedArticles: resolvedSelectedArticles,
+    showCvPhoto: resolvedShowCvPhoto,
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   };
@@ -1063,29 +1352,34 @@ export async function updateCv(
     return null;
   }
 
+  const updatePayload: Record<string, any> = {
+    name: cv.name,
+    language: cv.language,
+    selected_projects: cv.selectedProjects ?? [],
+    selected_experiences: cv.selectedExperiences ?? [],
+    selected_articles: cv.selectedArticles ?? [],
+  };
+
+  if (typeof cv.showCvPhoto === 'boolean') {
+    updatePayload.show_cv_photo = cv.showCvPhoto;
+  }
+
   let { data, error } = await supabase
     .from(TABLES.cvs)
-    .update({
-      name: cv.name,
-      language: cv.language,
-      selected_projects: cv.selectedProjects ?? [],
-      selected_experiences: cv.selectedExperiences ?? [],
-      selected_articles: cv.selectedArticles ?? [],
-    })
+    .update(updatePayload)
     .eq("id", cvId)
     .eq("user_id", userId)
-    .select("id, name, language, selected_projects, selected_experiences, selected_articles, created_at, updated_at")
+    .select("id, name, language, selected_projects, selected_experiences, selected_articles, show_cv_photo, created_at, updated_at")
     .single();
 
   if (isMissingOptionalColumn(error)) {
+    const fallbackPayload = { ...updatePayload };
+    delete fallbackPayload.selected_articles;
+    delete fallbackPayload.show_cv_photo;
+
     const fallback = await supabase
       .from(TABLES.cvs)
-      .update({
-        name: cv.name,
-        language: cv.language,
-        selected_projects: cv.selectedProjects ?? [],
-        selected_experiences: cv.selectedExperiences ?? [],
-      })
+      .update(fallbackPayload)
       .eq("id", cvId)
       .eq("user_id", userId)
       .select("id, name, language, selected_projects, selected_experiences, created_at, updated_at")
@@ -1102,6 +1396,9 @@ export async function updateCv(
   const resolvedSelectedArticles = Array.isArray((data as any).selected_articles)
     ? ((data as any).selected_articles as string[])
     : cv.selectedArticles ?? [];
+  const resolvedShowCvPhoto = typeof (data as any).show_cv_photo === 'boolean'
+    ? (data as any).show_cv_photo
+    : cv.showCvPhoto;
 
   return {
     id: data.id,
@@ -1110,6 +1407,7 @@ export async function updateCv(
     selectedProjects: data.selected_projects ?? [],
     selectedExperiences: data.selected_experiences ?? [],
     selectedArticles: resolvedSelectedArticles,
+    showCvPhoto: resolvedShowCvPhoto,
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   };

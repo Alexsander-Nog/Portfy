@@ -18,6 +18,7 @@ type JsonRecord = Record<string, any> | null;
 
 type ProfileRow = {
   id: string;
+  slug: string | null;
   full_name: string | null;
   preferred_locale: string | null;
   title: string | null;
@@ -30,6 +31,8 @@ type ProfileRow = {
   education: JsonRecord;
   social_links: JsonRecord;
   translations: JsonRecord;
+  theme_template: string | null;
+  cv_template: string | null;
 };
 
 type ThemeRow = {
@@ -122,27 +125,65 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const { id } = req.query;
-  const userId = Array.isArray(id) ? id[0] : id;
+  const { id, uid } = req.query;
+  const identifierRaw = Array.isArray(id) ? id[0] : id;
+  const userIdRaw = Array.isArray(uid) ? uid[0] : uid;
 
-  if (!userId || typeof userId !== 'string') {
+  if (!identifierRaw || typeof identifierRaw !== 'string') {
     res.status(400).json({ error: 'Missing portfolio identifier' });
     return;
   }
 
-  try {
-    const [{ data: profile, error: profileError }] = await Promise.all([
-      supabase
-        .from<ProfileRow>('profiles')
-        .select(
-          'id, full_name, preferred_locale, title, bio, location, email, phone, photo_url, skills, education, social_links, translations'
-        )
-        .eq('id', userId)
-        .maybeSingle(),
-    ]);
+  const identifier = identifierRaw.trim();
+  const requestedUserId = typeof userIdRaw === 'string' && userIdRaw.trim().length > 0
+    ? userIdRaw.trim()
+    : null;
 
-    if (profileError) {
-      throw profileError;
+  try {
+    const profileColumns =
+      'id, slug, full_name, preferred_locale, title, bio, location, email, phone, photo_url, skills, education, social_links, translations, theme_template, cv_template';
+
+    const selectProfile = async (column: 'slug' | 'id', value: string): Promise<ProfileRow | null> => {
+      const { data, error } = await supabase
+        .from<ProfileRow>('profiles')
+        .select(profileColumns)
+        .eq(column, value)
+        .maybeSingle();
+
+      if (error && error.code && error.code !== 'PGRST116') {
+        throw error;
+      }
+
+      return data ?? null;
+    };
+
+    const loadByUserId = async (userId: string): Promise<ProfileRow | null> => {
+      const normalized = userId.trim();
+      if (!normalized) {
+        return null;
+      }
+      return selectProfile('id', normalized);
+    };
+
+    let profile: ProfileRow | null = null;
+
+    if (requestedUserId) {
+      profile = await loadByUserId(requestedUserId);
+    }
+
+    if (!profile) {
+      profile = await selectProfile('slug', identifier);
+    }
+
+    if (!profile) {
+      const lowered = identifier.toLowerCase();
+      if (lowered !== identifier) {
+        profile = await selectProfile('slug', lowered);
+      }
+    }
+
+    if (!profile) {
+      profile = await selectProfile('id', identifier);
     }
 
     if (!profile) {
@@ -150,42 +191,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return;
     }
 
+    const ownerId = profile.id;
+
     const [themeResult, videosResult, projectsResult, experiencesResult, articlesResult, cvsResult] = await Promise.all([
       supabase
         .from<ThemeRow>('user_themes')
         .select('primary_color, secondary_color, accent_color, background_color, font_family, theme_mode, layout')
-        .eq('user_id', userId)
+        .eq('user_id', ownerId)
         .maybeSingle(),
       supabase
         .from<VideoRow>('featured_videos')
         .select('id, url, platform, title, description, tags, position')
-        .eq('user_id', userId)
+        .eq('user_id', ownerId)
         .order('position', { ascending: true }),
       supabase
         .from<ProjectRow>('projects')
         .select(
           'id, title, description, image_url, tags, link, category, type, repo_url, media_url, pdf_url, company, results, position, translations'
         )
-        .eq('user_id', userId)
+        .eq('user_id', ownerId)
         .order('created_at', { ascending: false }),
       supabase
         .from<ExperienceRow>('experiences')
         .select(
           'id, title, company, period, description, location, current, certificate_url, show_certificate, position, translations'
         )
-        .eq('user_id', userId)
+        .eq('user_id', ownerId)
         .order('created_at', { ascending: false }),
       supabase
         .from<ArticleRow>('articles')
         .select(
           'id, title, publication, publication_date, summary, link, doi, authors, show_in_portfolio, show_in_cv, position'
         )
-        .eq('user_id', userId)
+        .eq('user_id', ownerId)
         .order('created_at', { ascending: false }),
       supabase
         .from<CvRow>('cvs')
         .select('id, name, language, selected_projects, selected_experiences, selected_articles, created_at, updated_at')
-        .eq('user_id', userId)
+        .eq('user_id', ownerId)
         .order('updated_at', { ascending: false }),
     ]);
 
@@ -196,8 +239,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (articlesResult.error) throw articlesResult.error;
     if (cvsResult.error) throw cvsResult.error;
 
+    const profileSlug = profile.slug ?? undefined;
     const formattedProfile = {
       id: profile.id,
+      slug: profileSlug,
       fullName: profile.full_name ?? '',
       preferredLocale: profile.preferred_locale ?? undefined,
       title: profile.title ?? undefined,
@@ -210,6 +255,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       education: parseJson(profile.education),
       translations: parseJson(profile.translations),
       socialLinks: parseJson(profile.social_links),
+      portfolioTemplate: profile.theme_template ?? undefined,
+      cvTemplate: profile.cv_template ?? undefined,
     };
 
     const formattedTheme = themeResult.data
@@ -309,6 +356,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       experiences: formattedExperiences,
       articles: formattedArticles,
       cvs: formattedCvs,
+      resolvedUserId: ownerId,
+      resolvedSlug: profileSlug,
     });
   } catch (error) {
     console.error('[public-portfolio] Failed to build shared portfolio:', error);

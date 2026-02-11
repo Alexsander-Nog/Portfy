@@ -32,6 +32,7 @@ import {
   fetchSubscription,
   fetchUserTheme,
   ensureSubscription,
+  upsertUserProfile,
   upsertUserTheme,
   updatePreferredLocale,
 } from './data/portfolio';
@@ -43,6 +44,7 @@ import type {
   Project,
   ScientificArticle,
   Subscription,
+  SubscriptionPlan,
   UserProfile,
   UserTheme,
 } from './types';
@@ -63,6 +65,9 @@ const DEFAULT_THEME: UserTheme = {
   layout: 'modern',
 };
 
+const TRIAL_DURATION_DAYS = 15;
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+
 const EMPTY_PROFILE: UserProfile = {
   id: '',
   fullName: '',
@@ -76,19 +81,15 @@ const EMPTY_PROFILE: UserProfile = {
   skills: [],
   education: [],
   socialLinks: {},
+  portfolioTemplate: 'modern',
+  cvTemplate: 'modern',
+  trialStart: undefined,
+  trialEnd: undefined,
+  trialDaysRemaining: undefined,
 };
 
-interface PublicPortfolioResponse {
-  profile: UserProfile;
-  theme: UserTheme | null;
-  featuredVideos: FeaturedVideo[];
-  projects: Project[];
-  experiences: Experience[];
-  articles: ScientificArticle[];
-  cvs: CV[];
-}
-
 export default function App() {
+  console.log('APP RENDER START');
   const { locale, setLocale, t } = useLocale();
   const [currentPage, setCurrentPage] = useState<'landing' | 'auth' | 'dashboard' | 'public'>(() => {
     if (typeof window !== 'undefined') {
@@ -108,6 +109,8 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [checkoutLoading, setCheckoutLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState<string | null>(null);
   
   // User theme state
   const [userTheme, setUserTheme] = useState<UserTheme>({ ...DEFAULT_THEME });
@@ -127,73 +130,21 @@ export default function App() {
 
   // CVs state
   const [cvs, setCvs] = useState<CV[]>([]);
-  const [publicViewUserId, setPublicViewUserId] = useState<string | null>(null);
+  const [publicRouteId, setPublicRouteId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') {
+      return null;
+    }
+    const match = window.location.pathname.match(/^\/p\/([^/?#]+)/);
+    return match ? decodeURIComponent(match[1]) : null;
+  });
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const sessionUserId = session?.user?.id ?? null;
 
-  const loadSharedPortfolio = useCallback(async (userId: string) => {
-    if (!userId) {
+  useEffect(() => {
+    if (publicRouteId) {
       return;
     }
 
-    setIsLoading(true);
-    setLoadError(null);
-    setPublicViewUserId(userId);
-    setCurrentPage('public');
-    setUserProfile({ ...EMPTY_PROFILE });
-    setUserTheme({ ...DEFAULT_THEME });
-    setFeaturedVideos([]);
-    setProjects([]);
-    setExperiences([]);
-    setArticles([]);
-    setCvs([]);
-    setSubscription(null);
-
-    try {
-      const response = await fetch(`/api/public-portfolio/${userId}`);
-
-      if (!response.ok) {
-        if (response.status === 404) {
-          setLoadError('Portfólio não encontrado.');
-        } else {
-          const text = await response.text();
-          setLoadError(text || 'Erro ao carregar portfólio público.');
-        }
-        setCurrentPage('landing');
-        setPublicViewUserId(null);
-        return;
-      }
-
-      const data: PublicPortfolioResponse = await response.json();
-
-      setUserProfile(data.profile ?? { ...EMPTY_PROFILE });
-      setUserTheme(data.theme ?? { ...DEFAULT_THEME });
-      setFeaturedVideos(Array.isArray(data.featuredVideos) ? data.featuredVideos : []);
-      setProjects(Array.isArray(data.projects) ? data.projects : []);
-      setExperiences(Array.isArray(data.experiences) ? data.experiences : []);
-      setArticles(Array.isArray(data.articles) ? data.articles : []);
-      setCvs(Array.isArray(data.cvs) ? data.cvs : []);
-
-      if (data.profile?.preferredLocale && data.profile.preferredLocale !== locale) {
-        setLocale(data.profile.preferredLocale);
-      }
-
-      if (typeof window !== 'undefined') {
-        const url = new URL(window.location.href);
-        url.pathname = `/p/${userId}`;
-        url.searchParams.delete('view');
-        window.history.replaceState({}, '', url.toString());
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erro ao carregar portfólio público.';
-      setLoadError(message);
-      setCurrentPage('landing');
-      setPublicViewUserId(null);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [locale, setLocale]);
-
-  useEffect(() => {
     if (!isSupabaseConfigured) {
       return;
     }
@@ -230,6 +181,12 @@ export default function App() {
           skills: [],
           education: [],
           socialLinks: {},
+          portfolioTemplate: 'modern',
+          cvTemplate: 'modern',
+          showCvPhoto: true,
+          trialStart: undefined,
+          trialEnd: undefined,
+          trialDaysRemaining: undefined,
         });
         setUserTheme({
           primaryColor: '#2d2550',
@@ -253,7 +210,7 @@ export default function App() {
       isMounted = false;
       authListener.subscription.unsubscribe();
     };
-  }, []);
+  }, [publicRouteId, isSupabaseConfigured]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -261,21 +218,12 @@ export default function App() {
     }
 
     const evaluateRoute = () => {
-      const { pathname } = window.location;
-      const match = pathname.match(/^\/p\/([a-zA-Z0-9-]+)/);
-
+      const match = window.location.pathname.match(/^\/p\/([^/?#]+)/);
       if (match) {
-        const targetId = match[1];
-        if (publicViewUserId !== targetId) {
-          loadSharedPortfolio(targetId);
-        } else {
-          setCurrentPage('public');
-        }
-        return;
-      }
-
-      if (publicViewUserId) {
-        setPublicViewUserId(null);
+        setPublicRouteId(decodeURIComponent(match[1]));
+        setCurrentPage('public');
+      } else {
+        setPublicRouteId(null);
       }
     };
 
@@ -284,7 +232,7 @@ export default function App() {
     return () => {
       window.removeEventListener('popstate', evaluateRoute);
     };
-  }, [loadSharedPortfolio, publicViewUserId]);
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -307,11 +255,11 @@ export default function App() {
   }, [setLocale]);
 
   useEffect(() => {
-    if (publicViewUserId) {
+    if (publicRouteId) {
       return;
     }
 
-    if (!session || !isSupabaseConfigured) {
+    if (!sessionUserId || !session || !isSupabaseConfigured) {
       return;
     }
 
@@ -324,7 +272,7 @@ export default function App() {
     setUserProfile({
       id: '',
       fullName: '',
-       preferredLocale: undefined,
+      preferredLocale: undefined,
       title: undefined,
       bio: undefined,
       location: undefined,
@@ -334,6 +282,12 @@ export default function App() {
       skills: [],
       education: [],
       socialLinks: {},
+      portfolioTemplate: 'modern',
+      cvTemplate: 'modern',
+      showCvPhoto: true,
+      trialStart: undefined,
+      trialEnd: undefined,
+      trialDaysRemaining: undefined,
     });
     setUserTheme({
       primaryColor: '#2d2550',
@@ -352,19 +306,19 @@ export default function App() {
     setSubscription(null);
 
     console.log('=== CARREGANDO DADOS DO USUÁRIO ===');
-    console.log('Session user ID:', session.user.id);
+    console.log('Session user ID:', sessionUserId);
     
     Promise.all([
-      fetchUserProfile(session.user.id),
-      fetchUserTheme(session.user.id),
-      fetchFeaturedVideos(session.user.id),
-      fetchProjects(session.user.id),
-      fetchExperiences(session.user.id),
-      fetchScientificArticles(session.user.id),
-      fetchCvs(session.user.id),
-      fetchSubscription(session.user.id),
+      fetchUserProfile(sessionUserId),
+      fetchUserTheme(sessionUserId),
+      fetchFeaturedVideos(sessionUserId),
+      fetchProjects(sessionUserId),
+      fetchExperiences(sessionUserId),
+      fetchScientificArticles(sessionUserId),
+      fetchCvs(sessionUserId),
+      fetchSubscription(sessionUserId),
     ])
-      .then(([profileData, themeData, videoData, projectData, experienceData, articleData, cvData, subscriptionData]) => {
+      .then(async ([profileData, themeData, videoData, projectData, experienceData, articleData, cvData, subscriptionData]) => {
         console.log('Dados recebidos do Supabase:');
         console.log('  profileData:', profileData);
         console.log('  themeData:', themeData);
@@ -387,7 +341,7 @@ export default function App() {
             (session.user.user_metadata?.name as string | undefined) ??
             '';
           const fallbackProfile = {
-            id: session.user.id,
+            id: sessionUserId,
             fullName: fallbackName,
             preferredLocale: locale,
             email: session.user.email ?? undefined,
@@ -399,9 +353,24 @@ export default function App() {
             skills: [],
             education: [],
             socialLinks: {},
+            portfolioTemplate: 'modern',
+            cvTemplate: 'modern',
+            showCvPhoto: true,
+            trialStart: new Date().toISOString(),
+            trialEnd: new Date(Date.now() + TRIAL_DURATION_DAYS * DAY_IN_MS).toISOString(),
+            trialDaysRemaining: TRIAL_DURATION_DAYS,
           };
           console.log('Usando perfil fallback:', fallbackProfile);
           setUserProfile(fallbackProfile);
+
+          try {
+            const persistedProfile = await upsertUserProfile(sessionUserId, fallbackProfile);
+            if (persistedProfile) {
+              setUserProfile(persistedProfile);
+            }
+          } catch (fallbackError) {
+            console.error('Não foi possível persistir o perfil fallback:', fallbackError);
+          }
         }
         if (themeData) {
           console.log('Atualizando userTheme com:', themeData);
@@ -437,7 +406,7 @@ export default function App() {
     return () => {
       isMounted = false;
     };
-  }, [session, publicViewUserId]);
+  }, [sessionUserId, session, isSupabaseConfigured, publicRouteId, locale]);
 
   useEffect(() => {
     if (session && currentPage === 'auth') {
@@ -452,6 +421,10 @@ export default function App() {
   }, [currentPage]);
 
   useEffect(() => {
+    if (publicRouteId) {
+      return;
+    }
+
     if (!session || !isSupabaseConfigured) {
       return;
     }
@@ -465,13 +438,17 @@ export default function App() {
         setSubscription(ensured);
       }
     });
-  }, [session, subscription]);
+  }, [session, subscription, publicRouteId]);
 
   useEffect(() => {
+    if (publicRouteId) {
+      return;
+    }
+
     if (userProfile.preferredLocale && userProfile.preferredLocale !== locale) {
       setLocale(userProfile.preferredLocale);
     }
-  }, [userProfile.preferredLocale, locale, setLocale]);
+  }, [userProfile.preferredLocale, locale, setLocale, publicRouteId]);
 
   const handleThemeChange = async (nextTheme: UserTheme) => {
     if (session && isSupabaseConfigured) {
@@ -524,7 +501,60 @@ export default function App() {
     }));
   };
 
-  const statusBanner = isSupabaseConfigured && (isLoading || loadError) ? (
+  const openPublicPortfolio = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const identifier = (userProfile.slug && userProfile.slug.trim()) || sessionUserId;
+    if (!identifier) {
+      return;
+    }
+
+    const url = new URL(`/p/${encodeURIComponent(identifier)}`, window.location.origin);
+    const external = window.open(url.toString(), '_blank', 'noopener,noreferrer');
+    if (!external) {
+      window.location.assign(url.toString());
+    }
+  }, [sessionUserId, userProfile.slug]);
+
+  const startCheckout = useCallback(async (planId: SubscriptionPlan = 'pro') => {
+    if (!sessionUserId) {
+      setCurrentPage('auth');
+      return;
+    }
+
+    setCheckoutError(null);
+    setCheckoutLoading(true);
+
+    try {
+      const response = await fetch('/api/billing/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId }),
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || t('subscription.errors.generic'));
+      }
+
+      const payload: { url?: string } = await response.json();
+      if (payload.url) {
+        window.location.href = payload.url;
+        return;
+      }
+
+      throw new Error(t('subscription.errors.checkoutUnavailable'));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('subscription.errors.generic');
+      setCheckoutError(message);
+    } finally {
+      setCheckoutLoading(false);
+    }
+  }, [sessionUserId, setCurrentPage, t]);
+
+  const statusBanner = isSupabaseConfigured && !publicRouteId && (isLoading || loadError) ? (
     <div className="fixed top-4 right-4 z-50 rounded-lg border border-[#e8e3f0] bg-white px-4 py-2 text-sm text-[#2d2550] shadow-lg">
       {isLoading ? 'Sincronizando dados...' : loadError}
     </div>
@@ -535,42 +565,29 @@ export default function App() {
       return 'active' as const;
     }
 
-    if (subscription.status === 'blocked') {
+    if (subscription.planType === 'trial') {
+      return subscription.trialExpired ? 'blocked' : 'trial';
+    }
+
+    if (!subscription.subscriptionActive || subscription.status === 'blocked') {
       return 'blocked' as const;
     }
 
-    const now = new Date();
-    const trialEnds = subscription.trialEndsAt ? new Date(subscription.trialEndsAt) : null;
-    const periodEnds = subscription.currentPeriodEnd ? new Date(subscription.currentPeriodEnd) : null;
-    const graceDays = subscription.graceDays ?? 3;
-
-    if (trialEnds && now <= trialEnds) {
-      return 'trial' as const;
-    }
-
-    if (periodEnds && now <= periodEnds) {
-      return 'active' as const;
-    }
-
-    if (periodEnds) {
-      const graceEnd = new Date(periodEnds);
-      graceEnd.setDate(graceEnd.getDate() + graceDays);
-      if (now <= graceEnd) {
-        return 'grace' as const;
-      }
-      return 'blocked' as const;
-    }
-
-    if (trialEnds && now > trialEnds) {
-      return 'blocked' as const;
+    if (subscription.status === 'past_due') {
+      return 'grace' as const;
     }
 
     return 'active' as const;
   })();
 
   const isBlocked = accessState === 'blocked';
+  const isAuthPage = currentPage === 'auth';
+  const isDashboardPage = currentPage === 'dashboard';
+  const isPublicPage = currentPage === 'public';
+  const isStandalonePublicView = Boolean(publicRouteId);
 
-  if (currentPage === 'auth') {
+  if (isAuthPage) {
+    console.log('APP RENDER END');
     return (
       <>
         {statusBanner}
@@ -582,19 +599,32 @@ export default function App() {
     );
   }
 
-  if (currentPage === 'dashboard') {
+  if (isDashboardPage) {
     if (isBlocked) {
+      console.log('APP RENDER END');
       return (
-        <div className="min-h-screen bg-white flex items-center justify-center px-6">
-          <div className="max-w-lg text-center">
-            <h1 className="text-3xl font-bold text-[#1a1534] mb-4">{t('subscription.blocked.title')}</h1>
-            <p className="text-[#6b5d7a]">
-              {t('subscription.blocked.subtitle')}
-            </p>
+        <div className="min-h-screen bg-[#0f0b1f] flex items-center justify-center px-6">
+          <div className="max-w-md w-full text-center bg-white/5 backdrop-blur-lg rounded-3xl border border-white/10 px-10 py-12 shadow-2xl space-y-6">
+            <h1 className="text-3xl font-semibold text-white">{t('subscription.paywall.title')}</h1>
+            <p className="text-white/70 text-base">{t('subscription.paywall.subtitle')}</p>
+            <div className="flex flex-col gap-3">
+              <Button
+                variant="primary"
+                size="lg"
+                className="!bg-white !text-[#2d2550] !hover:bg-white/90 !hover:text-[#2d2550] shadow-lg shadow-white/10"
+                onClick={() => startCheckout('pro')}
+                disabled={checkoutLoading}
+              >
+                {checkoutLoading ? t('subscription.paywall.loading') : t('subscription.paywall.cta')}
+              </Button>
+              <p className="text-sm text-white/50">{t('subscription.paywall.note')}</p>
+            </div>
+            {checkoutError ? <p className="text-sm text-red-300">{checkoutError}</p> : null}
           </div>
         </div>
       );
     }
+    console.log('APP RENDER END');
     return (
       <>
         {statusBanner}
@@ -616,6 +646,12 @@ export default function App() {
               skills: [],
               education: [],
               socialLinks: {},
+              portfolioTemplate: 'modern',
+              cvTemplate: 'modern',
+              showCvPhoto: true,
+              trialStart: undefined,
+              trialEnd: undefined,
+              trialDaysRemaining: undefined,
             });
             setUserTheme({
               primaryColor: '#2d2550',
@@ -634,14 +670,7 @@ export default function App() {
             setSubscription(null);
             setCurrentPage('landing');
           }}
-          onViewPublicPortfolio={() => {
-            setCurrentPage('public');
-            if (typeof window !== 'undefined') {
-              const url = new URL(window.location.href);
-              url.searchParams.set('view', 'public');
-              window.history.pushState({}, '', url.toString());
-            }
-          }}
+          onViewPublicPortfolio={openPublicPortfolio}
           userTheme={userTheme}
           onThemeChange={handleThemeChange}
           featuredVideos={featuredVideos}
@@ -665,13 +694,15 @@ export default function App() {
           userEmail={session?.user.email}
           accountCreatedAt={session?.user.created_at}
           onLocalePersist={handlePreferredLocaleChange}
+          onStartCheckout={startCheckout}
         />
       </>
     );
   }
 
-  if (currentPage === 'public') {
+  if (isPublicPage) {
     if (isBlocked) {
+      console.log('APP RENDER END');
       return (
         <div className="min-h-screen bg-white flex items-center justify-center px-6">
           <div className="max-w-lg text-center">
@@ -683,18 +714,24 @@ export default function App() {
         </div>
       );
     }
+    console.log('APP RENDER END');
     return (
       <>
         {statusBanner}
         <PublicPortfolio 
-          userTheme={userTheme}
-          featuredVideos={featuredVideos}
-          userProfile={userProfile}
-          projects={projects}
-          experiences={experiences}
-          articles={articles}
-          cvs={cvs}
-          onBackToDashboard={session ? () => {
+          previewMode={!isStandalonePublicView}
+          publicPortfolioId={publicRouteId}
+          userTheme={isStandalonePublicView ? undefined : userTheme}
+          userProfile={isStandalonePublicView ? undefined : userProfile}
+          featuredVideos={isStandalonePublicView ? undefined : featuredVideos}
+          projects={isStandalonePublicView ? undefined : projects}
+          experiences={isStandalonePublicView ? undefined : experiences}
+          articles={isStandalonePublicView ? undefined : articles}
+          cvs={isStandalonePublicView ? undefined : cvs}
+          loading={isStandalonePublicView ? false : isLoading}
+          error={isStandalonePublicView ? null : loadError}
+          onSlugChange={isStandalonePublicView ? setPublicRouteId : undefined}
+          onBackToDashboard={!isStandalonePublicView && session ? () => {
             setCurrentPage('dashboard');
             if (typeof window !== 'undefined') {
               const url = new URL(window.location.href);
@@ -708,6 +745,7 @@ export default function App() {
   }
 
   // Landing Page
+  console.log('APP RENDER END');
   return (
     <div className="min-h-screen bg-white">
       {statusBanner}

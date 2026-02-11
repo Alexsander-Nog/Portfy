@@ -37,6 +37,22 @@ export interface UserTheme {
   layout?: "modern" | "minimal" | "masonry" | "list" | "spotlight" | "editorial";
 }
 
+export type PortfolioTemplateId =
+  | "modern"
+  | "minimal"
+  | "dark"
+  | "gradient";
+
+export type CvTemplateId =
+  | "modern"
+  | "minimal"
+  | "creative"
+  | "executive"
+  | "modernClassic"
+  | "minimalElegant"
+  | "corporate"
+  | "creativeAccent";
+
 export interface FeaturedVideo {
   id: string;
   url: string;
@@ -114,6 +130,7 @@ export interface CV {
   selectedProjects: string[];
   selectedExperiences: string[];
   selectedArticles: string[];
+  showCvPhoto?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -129,15 +146,21 @@ export interface EducationItem {
 
 export type SubscriptionStatus = "trialing" | "active" | "past_due" | "canceled" | "blocked";
 export type SubscriptionPlan = "basic" | "pro" | "premium";
+export type SubscriptionPlanType = "trial" | "paid";
 
 export interface Subscription {
   id: string;
   userId: string;
   status: SubscriptionStatus;
+  planType: SubscriptionPlanType;
   planTier: SubscriptionPlan;
+  subscriptionActive: boolean;
+  trialStart?: string;
   trialEndsAt?: string;
   currentPeriodEnd?: string;
   graceDays?: number;
+  trialDaysRemaining?: number;
+  trialExpired?: boolean;
   updatedAt: string;
 }
 
@@ -155,6 +178,7 @@ export interface ProfileTranslations {
 export interface UserProfile {
   id: string;
   fullName: string;
+  slug?: string;
   preferredLocale?: Locale;
   title?: string;
   bio?: string;
@@ -174,4 +198,10 @@ export interface UserProfile {
     spotify?: string;
     soundcloud?: string;
   };
+  portfolioTemplate?: PortfolioTemplateId;
+  cvTemplate?: CvTemplateId;
+  showCvPhoto?: boolean;
+  trialStart?: string;
+  trialEnd?: string;
+  trialDaysRemaining?: number;
 }
